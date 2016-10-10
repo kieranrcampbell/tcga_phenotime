@@ -1,0 +1,194 @@
+---
+title: "Exploratory analysis of TCGA OV data"
+author: "Kieran Campbell"
+date: "9 October 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(scater)
+library(tidyverse)
+library(magrittr)
+library(matrixStats)
+library(ggrepel)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+
+```{r data-prep, include = FALSE}
+load("../data/sce_ovarian_kallisto.Rdata")
+sc <- sce[matrixStats::rowVars(exprs(sce)) > 1, ]
+is_exprs(sc) <- exprs(sc) > 0
+sc <- calculateQCMetrics(sc)
+
+hgnc_symbols <- sapply(strsplit(featureNames(sc), "_"), `[`, 2)
+
+dvar <- data_frame(# mean_exprs = rowMeans(exprs(sc)),
+                   var_exprs = matrixStats::rowVars(exprs(sc)),
+                   hgnc_symbols, gene = featureNames(sc))
+fData(sc) <- cbind(fData(sc), dvar)
+
+## group factors to avoid low frequency ones
+gt_table <- table(fData(sc)$gene_type)
+new_gt_names <- names(gt_table)
+new_gt_names[gt_table < 50] <- "other"
+fData(sc)$short_gene_type <- plyr::mapvalues(fData(sc)$gene_type,
+                                             from = names(gt_table),
+                                             to = new_gt_names)
+```
+
+# Mean-variance relationship
+
+Mean variance relationships are usually informative. Below are three plots of mean-variance, first coloured by gene biotype, then emphasising those involved in nonsense mediated decay and immunoglobuin-V:
+
+```{r mean-var}
+ggplot(fData(sc), aes(x = mean_exprs, y = var_exprs, color = short_gene_type)) + 
+  geom_point() + xlab("Mean") +
+  ylab("Variance") +
+  geom_text_repel(data = filter(fData(sc), var_exprs > 8.5), 
+                  aes(label = hgnc_symbols), size = 5)
+
+ggplot(fData(sc), aes(x = mean_exprs, y = var_exprs)) + 
+  geom_point(alpha = 0.5) + xlab("Mean") +
+  ylab("Variance") +
+  geom_point(data = filter(fData(sc), gene_type == "nonsense_mediated_decay"), 
+                  aes(label = hgnc_symbols, fill = short_gene_type), 
+             color = 'black', shape = 21, size = 3)
+
+ggplot(fData(sc), aes(x = mean_exprs, y = var_exprs)) + 
+  geom_point(alpha = 0.5) + xlab("Mean") +
+  ylab("Variance") +
+  geom_point(data = filter(fData(sc), gene_type == "IG_V_gene"), 
+             aes(label = hgnc_symbols, fill = short_gene_type), 
+             color = 'black', shape = 21, size = 3)
+```
+
+
+# Technical effects of ACTB
+
+We have concerns about the technical distribution of one ACTB transcript:
+
+```{r actb-plot}
+plotExpression(sc, feature = "ENST00000464611.1_ACTB", x = "plate")
+```
+
+Let's see what the extent of correlations with ACTB is and how that compares to a null distribution:
+
+```{r actb-cors}
+actb_exprs <- exprs(sc)["ENST00000464611.1_ACTB", ]
+cors_with_actb <- as.numeric(cor(t(exprs(sc)), actb_exprs))
+null_cors_with_actb <- as.numeric(cor(t(exprs(sc)), sample(actb_exprs)))
+
+data_frame(actb = cors_with_actb, null = null_cors_with_actb) %>% 
+  gather(type, correlation) %>% 
+  ggplot(aes(x = correlation, fill = type)) + geom_density(alpha = 0.7) 
+```
+
+We see there are a significant number of genes with large correlations (and anti-correlations) to ACTB. Let's have a look at the highest and lowest correlations:
+
+```{r pickout-actb-genes}
+plotExpression(sc, x = "plate", feature = featureNames(sc)[order(cors_with_actb, decreasing = T)][2])
+plotExpression(sc, x = "plate", feature = featureNames(sc)[order(cors_with_actb)][1])
+```
+
+There appears to be technical effects here too. We can look at the correlations of genes with ACTB compared to there variance, and see how this varies with gene type:
+
+```{r cor-var-plot, fig.width = 12, fig.height = 7}
+fData(sc)$correlation_with_actb <- as.numeric(cors_with_actb)
+
+ggplot(fData(sc), aes(x = correlation_with_actb, y = var_exprs,
+                      color = short_gene_type)) +
+  geom_point() + stat_density_2d(data  = filter(fData(sc), short_gene_type %in% c("nonsense_mediated_decay", "IG_V_gene")))
+```
+
+We see there are a number of high-variance genes highly correlated with ACTB, but the IG-V and NMD pathways largely avoid this (slight anti-correlation?).
+
+
+
+# What are the PCs?
+
+Finally, we assign each cell a IG-V score and a nonsense-mediated decay score (by simply taking the mean expression of the genes associated with these for each cell).
+
+```{r assign-scores}
+get_mean_exprs <- function(term) {
+  pathway_genes <- filter(fData(sc), gene_type %in% term) %>% extract2("gene")
+  mean_exprs <- rowMeans(scale(t(exprs(sc)[pathway_genes, ])))
+  return(mean_exprs)
+}
+
+sc$nmd_score <- get_mean_exprs("nonsense_mediated_decay")
+sc$igv_score <- get_mean_exprs("IG_V_gene")
+
+ggplot(pData(sc), aes(x = censored, y = igv_score)) + geom_boxplot()
+ggplot(pData(sc), aes(x = censored, y = nmd_score)) + geom_boxplot()
+```
+
+First, are the scores correlated?
+
+```{r are-correlated}
+plotPhenoData(sc, aes_string(x = "nmd_score", y = "igv_score"))
+```
+
+Nope! What happens if we plot PCA by these scores:
+
+```{r pca-by-score, fig.width = 10, fig.height = 9}
+plotPCA(sc, colour_by = "pct_dropout", ncomponents = 4)
+plotPCA(sc, colour_by = "igv_score", ncomponents = 4)
+plotPCA(sc, colour_by = "nmd_score", ncomponents = 4)
+```
+
+So PC1 = dropout, PC2 = IG-V, PC4 = NMD. Cool!
+
+What about the NMD pathway being associated with somatic mutations
+
+```{r nmd-somatic}
+plotPhenoData(sc, aes_string(x = "n_mutations", y = "nmd_score"))
+```
+
+# TREGs and CTLs
+
+```{r tregs}
+ctl4 <- "ENSG00000163599"
+
+treg_marker_ind <- featureNames(sc)[match("CD4", fData(sc)$hgnc_symbol)]
+
+sc$cd4_expression <- exprs(sc)[treg_marker_ind,]
+
+fit_igv <- lm(sc$cd4_expression ~ sc$igv_score)
+print(paste("R2:", summary(fit_igv)$r.squared))
+
+ggplot(pData(sc), aes_string(x = "igv_score", y = "cd4_expression")) +
+  geom_point() + ggtitle(expression(paste(R^2, " = 0.24"))) +
+  ylab("CD4 expression (TREGs)")
+
+fit_nmd <- lm(sc$cd4_expression ~ sc$nmd_score)
+print(paste("R2:", summary(fit_nmd)$r.squared))
+
+ggplot(pData(sc), aes_string(x = "nmd_score", y = "cd4_expression")) +
+  geom_point() + ggtitle(expression(paste(R^2, " = 0.16"))) +
+  ylab("CD4 expression (TREGs)")
+
+
+plotPCA(sc, colour_by = treg_marker_ind)
+plotTSNE(sc, colour_by = treg_marker_ind, perplexity = 4)
+
+
+
+## There's a foxp3 transcript that shows correlated expression
+sc$foxp3 <- exprs(sce)["ENST00000376207.8_FOXP3", ]
+
+plotPhenoData(sc, aes_string(x = "cd4_expression", y = "foxp3"))
+
+
+sc$treg_score <- rowMeans(cbind(scale_vec(sc$foxp3), scale_vec(sc$cd4_expression)))
+
+plotPCA(sc, colour_by = "foxp3", ncomponents = 3)
+```
+
+
+
+
+
