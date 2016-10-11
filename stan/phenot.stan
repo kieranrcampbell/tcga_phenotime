@@ -13,7 +13,10 @@ parameters {
   vector[P] beta[G];
   real pst[N];
   real<lower = 0> tau[G];
-  real<lower = 0> cov_tau[G];
+  vector<lower = 0>[P] cov_tau[G];
+  
+  real a_beta;
+  real b_beta;
 }
 
 transformed parameters {
@@ -32,13 +35,13 @@ transformed parameters {
 
 model {
   tau ~ gamma(2, 2);
-  cov_tau ~ gamma(2, 2);
   
   for(p in 1:P) {
     for(g in 1:G) {
-      beta[g, p] ~ normal(0, 1 / sqrt(cov_tau[g]));
+      beta[g, p] ~ normal(0, 1 / sqrt(cov_tau[g, p] * tau[g]));
+      cov_tau[g, p] ~ gamma(10, 0.01);
     }
-  }
+  } 
   c ~ normal(0, 1);
   pst ~ normal(0, 1);
   

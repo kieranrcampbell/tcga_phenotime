@@ -13,6 +13,9 @@ library(tidyverse)
 library(magrittr)
 library(matrixStats)
 library(ggrepel)
+library(rstan)
+library(MCMCglmm)
+library(coda)
 
 scale_vec <- function(x) (x - mean(x)) / sd(x)
 ```
@@ -189,6 +192,109 @@ plotPCA(sc, colour_by = "foxp3", ncomponents = 3)
 ```
 
 
+# Time for some phenotime
+
+Data preparation:
+
+```{r phenotime-data-preparation}
+
+sc$patient.age_at_initial_pathologic_diagnosis <-
+  as.numeric(sc$patient.age_at_initial_pathologic_diagnosis)
+
+# sc$random <- sample(c(0,1), size = ncol(sc), replace = TRUE)
+sc$random <- rnorm(ncol(sc))
+
+# X <- model.matrix(~ patient.age_at_initial_pathologic_diagnosis, pData(sc))
+X <- model.matrix(~ random, pData(sc))
+X <- t( scale( X[,-1] ) ) # remove intercept
+
+# let's focus on igv genes
+igv_genes <- filter(fData(sc), gene_type %in% "IG_V_gene") %>% extract2("gene")
+Y <- exprs(sc)[igv_genes, ]
+Y <- t( scale(t(Y)) )
+
+N <- ncol(Y)
+stopifnot(N == ncol(X))
+
+G <- nrow(Y); P = nrow(X)
+
+dlist <- list(N = N, G = G, P = P, X = X, Y = Y)
+```
 
 
 
+```{r model-fitting}
+model <- stan_model("../stan/phenot.stan",
+                    model_name = "phenotime")
+
+fit <- vb(model, dlist, grad_samples = 3)
+fit <- sampling(model, dlist, chains = 1, iter = 4000)
+```
+
+Look at results - 
+
+```{r stan-results}
+phenotime <- posterior.mode(mcmc(extract(fit, "pst")$pst))
+
+pt_df <- data_frame(phenotime, pc1 = redDim(sc)[,1], pc2 = redDim(sc)[,2], 
+                    igv_pca = prcomp(t(Y))$x[,1],
+                     age = sc$patient.age_at_initial_pathologic_diagnosis,
+                     igv_score = sc$igv_score, foxp3 = sc$foxp3,
+                     censored = X[1, ], random = as.numeric(sc$random))
+
+ggplot(pt_df, aes(x = phenotime, y = igv_pca, color = random)) + geom_point() +
+  viridis::scale_color_viridis()
+
+ggplot(pt_df, aes(x = phenotime, y = igv_pca, color = age)) +
+  geom_point() + viridis::scale_color_viridis() 
+
+ggplot(pt_df, aes(x = phenotime, y = foxp3, color = age)) +
+  geom_point() + viridis::scale_color_viridis() 
+
+ggplot(pt_df, aes(x = phenotime, y = pc1, color = age)) +
+  geom_point() + viridis::scale_color_viridis() 
+
+```
+
+Let's check some posteriors:
+
+```{r check-posterior}
+tidy_beta <- function(beta, n) {
+  names(beta) <- rownames(Y)
+  beta_tidy <- gather(beta, gene, value)
+  beta_tidy$beta <- n
+  return(beta_tidy)
+}
+
+beta_1_tidy <- tidy_beta( as_data_frame( extract(fit, "beta")$beta[,,1] ), "beta_1" )
+
+ggplot(beta_1_tidy, aes(x = gene, y = value)) + geom_boxplot()
+
+
+
+## Look at factor loadings
+
+c_trace <- as_data_frame(extract(fit, "c")$c)
+names(c_trace) <- rownames(Y)
+c_tidy <- gather(c_trace, gene, value)
+
+ggplot(c_tidy, aes(x = gene, y = value)) + geom_boxplot()
+
+# and ARD posteriors for beta1
+ard_cov <- posterior.mode(mcmc(extract(fit, "cov_tau")$cov_tau[,,1]))
+
+ggplot(data_frame(ard_cov, gene = rownames(Y)), aes(x = gene, y = ard_cov)) +
+  geom_bar(stat = 'identity')
+```
+
+# Appendix
+
+## Prior on $\beta$
+
+If we select tau_beta from gamma(10, 0.01) then we get a prior on beta like
+
+```{r prior-on-beta}
+qplot(rnorm(10000, 0, 1 / sqrt(rgamma(10000, 1000, 1))), geom = "density")
+```
+
+which seems reasonable.
