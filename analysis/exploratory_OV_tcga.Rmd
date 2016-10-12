@@ -204,7 +204,7 @@ sc$patient.age_at_initial_pathologic_diagnosis <-
 # sc$random <- sample(c(0,1), size = ncol(sc), replace = TRUE)
 sc$random <- rnorm(ncol(sc))
 
-# X <- model.matrix(~ patient.age_at_initial_pathologic_diagnosis, pData(sc))
+X <- model.matrix(~ patient.age_at_initial_pathologic_diagnosis, pData(sc))
 X <- model.matrix(~ random, pData(sc))
 X <- t( scale( X[,-1] ) ) # remove intercept
 
@@ -286,6 +286,148 @@ ard_cov <- posterior.mode(mcmc(extract(fit, "cov_tau")$cov_tau[,,1]))
 ggplot(data_frame(ard_cov, gene = rownames(Y)), aes(x = gene, y = ard_cov)) +
   geom_bar(stat = 'identity')
 ```
+
+
+# Learning TCGA with mutation data
+
+Data preparation:
+
+```{r data-prep}
+sc_somatic <- sc[, !is.na(sc$n_somatic)]
+
+plotPhenoData(sc_somatic, aes_string(x = "patient.age_at_initial_pathologic_diagnosis",
+                              y = "n_mutations"))
+
+X <- model.matrix(~ n_mutations, pData(sc_somatic))
+X <- t( scale( X[,-1] ) ) # remove intercept
+
+# let's focus on igv genes
+# igv_genes <- filter(fData(sc_somatic), gene_type %in% "IG_V_gene") %>% extract2("gene")
+# Y <- exprs(sc_somatic)[igv_genes, ]
+# Y <- t( scale(t(Y)) )
+
+to_use <- matrixStats::rowVars(exprs(sc_somatic)) > 7
+Y <- t( scale(t(exprs(sc_somatic)[to_use, ])))
+
+# let's look at NMD genes
+# sc_nmd <- sc_somatic[fData(sc_somatic)$gene_type == "nonsense_mediated_decay", ]
+# Y <- exprs(sc_nmd)[rowVars(exprs(sc_nmd)) > 2.5, ]
+# Y <- t(scale(t(Y)))
+
+N <- ncol(Y)
+stopifnot(N == ncol(X))
+
+G <- nrow(Y); P = nrow(X)
+
+data_somatic <- list(N = N, G = G, P = P, X = X, Y = Y)
+
+```
+
+
+Fit model:
+
+```{r model-fitting-somatic}
+model <- stan_model("../stan/phenot.stan",
+                    model_name = "phenotime")
+model_ard <- stan_model("../stan/phenot_ard.stan",
+                       model_name = "phenotime_ard")
+
+fit <- vb(model_ard, data_somatic, grad_samples = 3)
+
+fit <- sampling(model_ard, data_somatic, chains = 1, iter = 2000, thin = 2)
+```
+
+Extract results:
+
+```{r extract-somatic-results}
+phenotime <- posterior.mode(mcmc(extract(fit, "pst")$pst))
+
+pt_df <- data_frame(phenotime, pc1 = redDim(sc_nmd)[,1], 
+                    pc2 = redDim(sc_nmd)[,2], 
+                    purepc1 = prcomp(t(Y))$x[,1],
+                     igv_score = sc_nmd$igv_score, foxp3 = sc_nmd$foxp3,
+                    n_mutations = sc_nmd$n_mutations)
+```
+
+Some plots:
+
+```{r somatic-plots}
+ggplot(pt_df, aes(x = phenotime, y = purepc1, color = n_mutations)) + geom_point() +
+  viridis::scale_color_viridis() + ylab("PC1")
+
+ggplot(pt_df, aes(x = phenotime, y = foxp3, color = n_mutations)) + geom_point() +
+  viridis::scale_color_viridis() 
+
+```
+
+And look at the betas:
+
+```{r check-betas}
+beta_1_tidy <- tidy_beta( as_data_frame( extract(fit, "beta")$beta[,,1] ), "beta_1" ) %>% 
+  mutate(is_igv_gene = gene %in% igv_genes)
+
+ggplot(beta_1_tidy, aes(x = gene, y = value, fill = is_igv_gene)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# and ARD posteriors for beta1
+ard_cov <- posterior.mode(mcmc(extract(fit, "cov_tau")$cov_tau[,,1]))
+df_ard <- data_frame(ard_cov, gene = rownames(Y))
+
+df_ard$c_map <- posterior.mode(mcmc(extract(fit, "c")$c))
+df_ard$beta_map <- posterior.mode(mcmc(extract(fit, "beta")$beta[,,1]))
+df_ard %<>% mutate(is_igv_gene = gene %in% igv_genes)
+
+
+ggplot(df_ard, aes(x = gene, y = ard_cov, fill = is_igv_gene)) +
+  geom_bar(stat = 'identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+stan_hist(fit, c("a_beta", "b_beta"))
+```
+
+Check which genes appear to be "regulated" by somatic mutations:
+
+```{r check-genes}
+genes_reg <- filter(df_ard) %>% extract2("gene") # , ard_cov < 10)
+
+df_gex <- as_data_frame(t(Y)) %>% 
+  mutate(phenotime, n_mutations = sc_somatic$n_mutations) %>% 
+  gather(gene, expression, -phenotime, -n_mutations)
+
+ggplot(df_gex, aes(x = phenotime, y = expression, color = n_mutations)) +
+  geom_point() + facet_wrap(~ gene, scales = "free_y") + 
+  viridis::scale_color_viridis()
+
+# genes_no_reg <- filter(df_ard, ard_cov > 600, abs(c_map) > 0.04) %>% extract2("gene")
+# 
+# df_gex_noreg <- as_data_frame(t(Y[genes_no_reg,])) %>% 
+#   mutate(phenotime, n_somatic = sc_somatic$n_somatic) %>% 
+#   gather(gene, expression, -phenotime, -n_somatic)
+# 
+# ggplot(df_gex_noreg, aes(x = phenotime, y = expression, color = n_somatic)) +
+#   geom_point() + facet_wrap(~ gene, scales = "free_y") + 
+#   viridis::scale_color_viridis()
+```
+
+Compare beta to c:
+
+```{r beta-to-c}
+ggplot(df_ard, aes(x = c_map, y = beta_map, color = is_igv_gene)) + geom_point()
+```
+
+Mean mutations along pseudotime:
+
+```{r rolling-mean}
+mutations_by_phenotime <- arrange(pt_df, phenotime) %>% extract2("n_mutations")
+rolling_median <- zoo::rollmedian(mutations_by_phenotime, 101)
+plot(rolling_median)
+
+ggplot(pt_df, aes(x = phenotime, y = n_mutations)) + geom_point() +
+  stat_smooth(method = "lm")
+
+lfit <- lm(n_mutations ~ phenotime, data = pt_df)
+```
+
 
 # Appendix
 
