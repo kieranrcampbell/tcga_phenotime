@@ -1,0 +1,306 @@
+---
+title: "Exploratory analysis of TCGA OV data"
+author: "Kieran Campbell"
+date: "9 October 2016"
+output: html_document
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(scater)
+library(tidyverse)
+library(magrittr)
+library(matrixStats)
+library(ggrepel)
+library(rstan)
+library(MCMCglmm)
+library(coda)
+library(biomaRt)
+library(GO.db)
+library(viridis)
+library(gplots)
+library(RColorBrewer)
+library(sva)
+
+
+# Some functions to use
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+
+tidy_beta <- function(beta, n) {
+  names(beta) <- rownames(Y)
+  beta_tidy <- gather(beta, gene, value)
+  beta_tidy$beta <- n
+  return(beta_tidy)
+}
+```
+
+
+```{r data-prep, include = FALSE}
+load("../data/sce_ovarian_kallisto.Rdata")
+sc <- sce[matrixStats::rowVars(exprs(sce)) > 0, ]
+is_exprs(sc) <- exprs(sc) > 0
+sc <- calculateQCMetrics(sc)
+
+hgnc_symbols <- sapply(strsplit(featureNames(sc), "_"), `[`, 2)
+
+dvar <- data_frame(# mean_exprs = rowMeans(exprs(sc)),
+                   var_exprs = matrixStats::rowVars(exprs(sc)),
+                   hgnc_symbols, gene = featureNames(sc))
+fData(sc) <- cbind(fData(sc), dvar)
+
+## group factors to avoid low frequency ones
+gt_table <- table(fData(sc)$gene_type)
+new_gt_names <- names(gt_table)
+new_gt_names[gt_table < 50] <- "other"
+fData(sc)$short_gene_type <- plyr::mapvalues(fData(sc)$gene_type,
+                                             from = names(gt_table),
+                                             to = new_gt_names)
+
+# Need to add ensembl transcript ids to SCESet:
+
+ensembl_transcript_ids <- sapply(strsplit(featureNames(sc), ".", fixed = TRUE), `[`, 1)
+fData(sc)$ensembl_transcript_id <- ensembl_transcript_ids
+
+sc$foxp3 <- exprs(sce)["ENST00000376207.8_FOXP3", ]
+```
+
+# Gene annotations
+
+Load genes associated with "lipid metabolism":
+
+```{r load-lipid-met}
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+go_lipid <- "GO:0006629" # lipid metabolic process
+
+xx <- as.list(GOBPCHILDREN)
+all_lipid_children <- xx[[go_lipid]]
+
+lipid_annotation <- getBM("ensembl_transcript_id", filters = "go_id",
+                   values = all_lipid_children, mart = ensembl)
+
+fData(sc)$is_lipid_transcript <- 
+  fData(sc)$ensembl_transcript_id %in% lipid_annotation$ensembl_transcript_id
+```
+
+Let's remove the batch effect:
+
+```{r remove-batch}
+sc$plate <- droplevels(sc$plate)
+batch <- sc$plate
+design <- model.matrix(~ 1, data = pData(sc))
+
+exprs_combat <- ComBat(exprs(sc), batch, design)
+exprs(sc) <- exprs_combat
+```
+
+
+```{r sce-lippid}
+sce_lipid <- sc[fData(sc)$is_lipid_transcript, ]
+```
+
+Subset to those with mutations:
+
+```{r sce-lipid2}
+sc_lipid <- sce_lipid[, !is.na(sce_lipid$n_mutations)]
+sc_lipid <- sc_lipid[rowVars(exprs(sc_lipid)) > 0, ]
+```
+
+Quick heatmap of lipids:
+
+```{r heatmap}
+prop_cells_exprs <- rowMeans(exprs(sc_lipid) > 0)
+sc_lipid <- sc_lipid[prop_cells_exprs > 0.2,]# & prop_cells_exprs < 1]
+exprs_for_heatmap <- exprs(sc_lipid) 
+# exprs_for_heatmap[exprs_for_heatmap > 5] <- 5
+col_side_col <- plyr::mapvalues(sc_lipid$censored, from = c(TRUE, FALSE),
+                                to = brewer.pal(3, "Set1")[1:2])
+heatmap.2(exprs_for_heatmap, trace = "none", col = "viridis",
+          ColSideColors = col_side_col)
+```
+
+Quick look at Foxp3
+
+```{r foxp3-lipids}
+lipid_pc1 <- prcomp(scale(t(exprs(sc_lipid))))$x[,1]
+
+df <- data_frame(pc1 = lipid_pc1, foxp3 = sc_lipid$foxp3, 
+                 pct_genes_expr = sc_lipid$pct_dropout) 
+
+df %>% 
+  ggplot(aes(x = -pc1, y = foxp3)) + geom_point() +
+  xlab("PC1 from lipid metabolism") + ylab("Foxp3 expression")
+
+df %>% 
+  ggplot(aes(x = pct_genes_expr, y = foxp3)) + geom_point() +
+  xlab("% genes expressed") + ylab("Foxp3 expression")
+
+df %>% 
+  ggplot(aes(x = pct_genes_expr, y = pc1)) + geom_point() +
+  xlab("% genes expressed") + ylab("FPC1")
+
+```
+
+# Phenotime
+
+
+```{r phenotime}
+X <- model.matrix(~ foxp3, pData(sc_lipid))
+X <- t( scale( X[,-1] ) ) # remove intercept
+
+Y <- t(scale(t(exprs(sc_lipid))))
+
+N <- ncol(Y)
+stopifnot(N == ncol(X))
+
+G <- nrow(Y); P = nrow(X)
+
+data_lipid <- list(N = N, G = G, P = P, X = X, Y = Y)
+
+```
+
+
+
+Fit model:
+
+```{r model-fitting-somatic}
+model_ard <- stan_model("../stan/phenot_ard.stan",
+                       model_name = "phenotime_ard")
+
+fit <- vb(model_ard, data_lipid, grad_samples = 3, output_samples = 500)
+```
+
+Extract results:
+
+```{r extract-somatic-results}
+phenotime <- posterior.mode(mcmc(extract(fit, "pst")$pst))
+
+pt_df <- data_frame(phenotime, foxp3 = sc_lipid$foxp3,
+                    purepc1 = prcomp(t(Y), scale = TRUE)$x[,1],
+                    purepc2 = prcomp(t(Y), scale = TRUE)$x[,2],
+                    n_mutations = sc_lipid$n_mutations)
+```
+
+Some plots:
+
+```{r somatic-plots}
+ggplot(pt_df, aes(x = scale_vec(purepc1), y = -scale_vec(phenotime), 
+                  color = foxp3)) + geom_point() +
+  viridis::scale_color_viridis() + stat_function(fun = function(x) x, linetype = 2)
+
+ggplot(pt_df, aes(x = phenotime, y = foxp3, color = n_mutations)) + geom_point() +
+  viridis::scale_color_viridis() 
+
+ggplot(pt_df, aes(x = purepc1, y = foxp3, color = n_mutations)) + geom_point() +
+  viridis::scale_color_viridis() 
+
+```
+
+Check plate effect:
+
+```{r plate-effect}
+data_frame(phenotime, plate = sc_lipid$plate) %>% 
+  ggplot(aes(x = plate, y = phenotime, fill = plate)) + 
+  geom_violin() + geom_jitter()
+```
+
+Check stage effect:
+
+```{r stage-effect}
+data_frame(phenotime, stage = sc_lipid$patient.stage_event.clinical_stage) %>% 
+  ggplot(aes(x = stage, y = phenotime, color = stage)) + geom_violin() +
+  geom_jitter() + theme(legend.position = 'none')
+```
+
+And look at the betas:
+
+```{r check-betas}
+beta_1_tidy <- tidy_beta( as_data_frame( extract(fit, "beta")$beta[,,1] ), "beta_1" ) 
+
+ggplot(beta_1_tidy, aes(x = gene, y = value)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# and ARD posteriors for beta1
+ard_cov <- posterior.mode(mcmc(extract(fit, "cov_tau")$cov_tau[,,1]))
+df_ard <- data_frame(ard_cov, gene = rownames(Y))
+
+df_ard$c_map <- posterior.mode(mcmc(extract(fit, "c")$c))
+df_ard$beta_map <- posterior.mode(mcmc(extract(fit, "beta")$beta[,,1]))
+
+ggplot(df_ard, aes(x = gene, y = ard_cov)) +
+  geom_bar(stat = 'identity') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 4))
+
+stan_hist(fit, c("a_beta", "b_beta"))
+
+## look at the alphas
+alpha_1_tidy <- tidy_beta( as_data_frame( extract(fit, "alpha")$alpha[,,1] ), "alpha_1" ) 
+
+ggplot(alpha_1_tidy, aes(x = gene, y = value)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+Check which genes appear to be "regulated" by somatic mutations:
+
+```{r check-genes}
+genes_reg <- arrange(df_ard, ard_cov) %>% extract2("gene") %>% head(n = 4)
+
+nmut <- sc_lipid$n_mutations
+foxp3 <- sc_lipid$foxp3
+
+df_gex <- as_data_frame(t(Y[genes_reg, ,drop = FALSE])) %>% 
+  mutate(phenotime, foxp3, nmut) %>% 
+  gather(gene, expression, -phenotime, -foxp3, -nmut)
+
+ggplot(df_gex, aes(x = phenotime, y = expression, color = foxp3)) +
+  geom_point() + facet_wrap(~ gene, scales = "free_y") + 
+  viridis::scale_color_viridis()
+
+# genes_no_reg <- filter(df_ard, ard_cov > 600, abs(c_map) > 0.04) %>% extract2("gene")
+# 
+# df_gex_noreg <- as_data_frame(t(Y[genes_no_reg,])) %>% 
+#   mutate(phenotime, n_somatic = sc_somatic$n_somatic) %>% 
+#   gather(gene, expression, -phenotime, -n_somatic)
+# 
+# ggplot(df_gex_noreg, aes(x = phenotime, y = expression, color = n_somatic)) +
+#   geom_point() + facet_wrap(~ gene, scales = "free_y") + 
+#   viridis::scale_color_viridis()
+```
+
+Compare beta to c:
+
+```{r beta-to-c}
+ggplot(df_ard, aes(x = c_map, y = beta_map)) + geom_point()
+```
+
+Mean mutations along pseudotime:
+
+```{r rolling-mean}
+mutations_by_phenotime <- arrange(pt_df, phenotime) %>% extract2("n_mutations")
+rolling_median <- zoo::rollmedian(mutations_by_phenotime, 101)
+plot(rolling_median)
+
+cowplot::plot_grid(ggplot(pt_df, aes(x = phenotime, y = n_mutations)) + geom_point(),
+          ggplot(pt_df, aes(x = purepc1, y = n_mutations)) + geom_point())
+
+lfit <- lm(n_mutations ~ poly(phenotime, 2), data = pt_df)
+```
+
+
+# Some quick cheating
+
+
+```{r cheating}
+pdata <- dplyr::select(pData(sc_lipid), patient.days_to_death,
+                patient.age_at_initial_pathologic_diagnosis,
+                # patient.stage_event.clinical_stage, censored,
+                n_mutations, censored * 1)
+pdata$patient.age_at_initial_pathologic_diagnosis <- 
+  as.numeric(pdata$patient.age_at_initial_pathologic_diagnosis)
+
+cors <- apply(pdata, 2, function(x) cor(x, phenotime, use = "complete.obs"))
+
+```

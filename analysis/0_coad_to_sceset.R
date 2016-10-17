@@ -60,7 +60,8 @@ coad_clinical <- COAD.clinical %>%
          polyps_present = patient.colon_polyps_present,
          t_stage = patient.stage_event.tnm_categories.pathologic_categories.pathologic_t,
          n_stage = patient.stage_event.tnm_categories.pathologic_categories.pathologic_n,
-         m_stage = patient.stage_event.tnm_categories.pathologic_categories.pathologic_m) %>% 
+         m_stage = patient.stage_event.tnm_categories.pathologic_categories.pathologic_m,
+         msi_status = patient.microsatellite_instability_test_results.microsatellite_instability_test_result.mononucleotide_and_dinucleotide_marker_panel_analysis_status) %>% 
   mutate(censored = is.na(patient.days_to_death))
 
 coad_clinical %<>% inner_join(select(id_map, patient_barcode, CGHubAnalysisID, AliquotBarcode, sample_type, vial),
