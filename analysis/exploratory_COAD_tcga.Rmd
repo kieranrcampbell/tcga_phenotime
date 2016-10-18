@@ -215,14 +215,17 @@ m_cov[is.na(m_cov)] <- round(mean(m_cov, na.rm = TRUE))
 n_cov <- 1 * (sc_tumour$n_stage == "n0")
 n_cov[is.na(m_cov)] <- round(mean(n_cov, na.rm = TRUE))
 
-X <- rbind(m_cov, n_cov)#,
+msi_cov <- 1 * (sc_tumour$msi_status == "msi-h")
+
+# X <- rbind(m_cov, n_cov)#,
            # scale_vec(weight_covariate))
+X <- matrix(msi_cov, nrow = 1)
            
 # X[is.na(X)] <- which.max(table(X)) - 1 # set 4 missing vals to mode
 
 # let's focus on igv genes
-genes_to_use <- filter(fData(sc_tumour),# gene_type %in% "nonsense_mediated_decay",
-                    var_exprs > 10) %>% extract2("gene")
+genes_to_use <- filter(fData(sc_tumour), #gene_type %in% "nonsense_mediated_decay",
+                    var_exprs > 5) %>% extract2("gene")
 Y <- exprs(sc_tumour)[genes_to_use, ]
 Y <- t( scale(t(Y)) )
 
@@ -241,7 +244,8 @@ model <- stan_model("../stan/phenot_ard.stan",
                     model_name = "phenotime_ard")
 
 fit <- vb(model, dlist, grad_samples = 3)
-fit <- sampling(model, dlist, iter = 6000, chains = 1, thin = 2)
+fit <- sampling(model, dlist, iter = 40000, chains = 1, thin = 2)
+# fit <- optimizing(model, dlist)
 ```
 
 Look at results - 
@@ -249,13 +253,18 @@ Look at results -
 ```{r stan-results}
 phenotime <- posterior.mode(mcmc(extract(fit, "pst")$pst))
 
-pt_df <- data_frame(phenotime, 
-                    igv_pca = prcomp(t(Y))$x[,1],
-                     igv_score = sc_tumour$igv_score, foxp3 = sc_tumour$foxp3,
-                     metastasis = factor(X[1, ]),
-                      lymph = factor(X[2, ]))#, weight = X[3,])
+#phenotime <- tidyMCMC(fit, "pst")
+#phenotime <- fit$par[grep("pst", names(fit$par))]
 
-ggplot(pt_df, aes(x = phenotime, y = igv_pca, colour = metastasis)) + geom_point() 
+pt_df <- data_frame(phenotime = scale_vec(phenotime), 
+                    igv_pca = scale_vec(prcomp(t(Y))$x[,1]),
+                     # igv_score = sc_tumour$igv_score, foxp3 = sc_tumour$foxp3,
+                     msi = factor(X[1, ])) #,
+                      # lymph = factor(X[2, ]))#, weight = X[3,])
+
+ggplot(pt_df, aes(x = igv_pca, y = phenotime, colour = msi)) + geom_point() +
+  stat_function(fun = function(x) x, linetype = 2, color = 'black')
+
 ggplot(pt_df, aes(x = phenotime, y = igv_pca, colour = lymph)) + geom_point() 
 
 
@@ -310,7 +319,7 @@ Compare beta to c:
 ```{r beta-to-c}
 bc <- data_frame(
   c = posterior.mode(mcmc(extract(fit, "c")$c)),
-  beta = posterior.mode(mcmc(extract(fit, "beta")$beta[,,2]))
+  beta = posterior.mode(mcmc(extract(fit, "beta")$beta[,,1]))
 )
 
 ggplot(bc, aes(x = c, y = beta)) + geom_point()
@@ -323,23 +332,23 @@ n <- factor(X[2,])
 weight <- weight_covariate
 
 
-genes_reg <- filter(ard_cov_tidy, covariate == "V3",
-                    value < 35) %>% extract2("gene") 
-
-df_gex <- as_data_frame(t(Y[genes_reg, , drop = FALSE])) %>% 
-  mutate(phenotime, weight) %>% 
-  gather(gene, expression, -phenotime, -weight)
-
-ggplot(df_gex, aes(x = phenotime, y = expression, color = weight )) +
-  geom_point() + facet_wrap(~ gene, scales = "free_y") +
-  scale_color_viridis()
+# genes_reg <- filter(ard_cov_tidy, covariate == "V3",
+#                     value < 35) %>% extract2("gene") 
+# 
+# df_gex <- as_data_frame(t(Y[genes_reg, , drop = FALSE])) %>% 
+#   mutate(phenotime, weight) %>% 
+#   gather(gene, expression, -phenotime, -weight)
+# 
+# ggplot(df_gex, aes(x = phenotime, y = expression, color = weight )) +
+#   geom_point() + facet_wrap(~ gene, scales = "free_y") +
+#   scale_color_viridis()
 
 
 genes_reg <- filter(ard_cov_tidy, covariate == "V1",
-                    value < 20) %>% extract2("gene") 
+                    value < 1.5) %>% extract2("gene") 
 
 df_gex <- as_data_frame(t(Y[genes_reg, , drop = FALSE])) %>% 
-  mutate(phenotime, m) %>% 
+  mutate(phenotime, m = factor(X[1,])) %>% 
   gather(gene, expression, -phenotime, -m)
 
 ggplot(df_gex, aes(x = phenotime, y = expression, color = m )) +
@@ -364,9 +373,26 @@ Compare beta to c:
 ggplot(df_ard, aes(x = c_map, y = beta_map, color = is_igv_gene)) + geom_point()
 ```
 
-# Cheating
+##  Cheating
 
 ```{r cheat-time}
+sc_tumour <- plotPCA(sc_tumour, ncomponents = 3, colour_by = "ms_high",
+                     return_SCESet = TRUE)
+
+pc3 <- redDim(sc_tumour)[,3]
+sc_tumour <- calculateQCMetrics(sc_tumour)
+genes_to_use <- filter(fData(sc_tumour), var_exprs > 1,
+                       mean_exprs > 1) %>% extract2("gene")
+
+sde <- switchde::switchde(sc_tumour[genes_to_use, ], pc3)
+
+sc_pc3 <- sc_tumour[genes_to_use, ]
+fData(sc_pc3)$is_pc3_sig <- sde$qval < 10^-20
+
+ggplot(fData(sc_pc3), aes(x = mean_exprs, y = var_exprs, color = is_pc3_sig)) +
+  geom_point(alpha = 0.5)
+
+
 fd <- filter(fData(sc_tumour), var_exprs > 2.5)
 m_status <- sc_tumour$m
 
@@ -381,249 +407,204 @@ fd$m_pval <- pvals
 pval_per_type <- group_by(fd, short_gene_type) %>% 
   summarise(mean_pval = median(m_pval), num = n())
 
+library(goseq)
+library(biomaRt)
+
+transcript_id <- sapply(strsplit(sde$gene, ".", fixed = TRUE), `[`, 1)
+sde$ensembl_transcript_id <- transcript_id
+
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+gene_mat <- getBM(c("ensembl_gene_id", "ensembl_transcript_id"), filters = "ensembl_transcript_id",
+                   values = transcript_id, mart = ensembl)
+
+gene_mat <- inner_join(gene_mat, sde, by = "ensembl_transcript_id") %>% 
+  dplyr::select(ensembl_gene_id, ensembl_transcript_id, qval)
+
+gene_mat_collapsed <- group_by(gene_mat, ensembl_gene_id) %>% 
+                      summarise(mean_qval = mean(qval))
+
+
+go_input <- 1 * (gene_mat_collapsed$mean_qval < 10^-5)
+names(go_input) <- gene_mat_collapsed$ensembl_gene_id
+
+pwf <- nullp(go_input, "hg38", "ensGene")
+go <- goseq(pwf, "hg38", "ensGene", test.cats = "GO:BP")
+```
+
+
+# Lipid metabolism
+
+First annotate which transcripts are involved in lipid metabolism:
+
+```{r lipid-metabolism-setup}
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+go_lipid <- "GO:0006629" # lipid metabolic process
+
+# xx <- as.list(GOBPCHILDREN)
+# all_lipid_children <- xx[[go_lipid]]
+
+la <- getBM(c("ensembl_transcript_id", "ensembl_gene_id"), filters = "go_id",
+                   values = go_lipid, mart = ensembl)
+
+fData(sc_tumour)$ensembl_transcript_id <- sapply(strsplit(featureNames(sc_tumour), ".", fixed = TRUE),
+                                                 `[`, 1)
+fData(sc_tumour)$is_lipid_transcript <- 
+  fData(sc_tumour)$ensembl_transcript_id %in% la$ensembl_transcript_id
+
+sc_lipid <- sc_tumour[fData(sc_tumour)$is_lipid_transcript, ]
+```
+
+Exploratory analysis:
+
+```{r exploratory-analysis}
+plotPCA(sc_lipid, ncomponents = 3, colour_by = "nuclei_percent")
 ```
 
 
 
+```{r phenotime-data-preparation}
+msi_cov <- 1 * (sc_lipid$msi_status == "msi-h")
+X <- matrix(msi_cov, nrow = 1)
 
-
-
-
-
-
-
-
-# Learning TCGA with mutation data
-
-
-## Explore mutation data
-
-
-```{r explore-mutation-data}
-ov_mutations <- filter(OV.mutations, bcr_patient_barcode != "bcr_patient_barcode")
-num_represented_patients <- length(unique(ov_mutations$bcr_patient_barcode))
-
-num_mutations <- group_by(ov_mutations, gene) %>% 
-  summarise(prop_patients = n() / num_represented_patients)
-
-num_mutations %>% filter(prop_patients > 0.05) %>% 
-  arrange(prop_patients) %>% 
-  ggplot(aes(x = gene, y = prop_patients)) + geom_bar(stat = "identity") +
-  xlab("Mutated gene") + ylab("Proportion of patients with mutation") +
-  ggtitle("Proportion of patients with mutation (>5% freq)")
-
-mutations_per_gene <- group_by(ov_mutations, gene, bcr_patient_barcode) %>% 
-  summarise(mpg = n())
-
-filter(mutations_per_gene, mpg > 1) %>% 
-  group_by(gene) %>% summarise(patients_with_gt_1_mutation = n()) %>% View()
-```
-
-## Model fitting
-
-
-Data preparation:
-
-```{r data-prep}
-sc_somatic <- sc[, !is.na(sc$n_somatic)]
-
-X <- model.matrix(~ n_mutations, pData(sc_somatic))
-X <- t( scale( X[,-1] ) ) # remove intercept
-
-# let's focus on igv genes
-# igv_genes <- filter(fData(sc_somatic), gene_type %in% "IG_V_gene") %>% extract2("gene")
-# Y <- exprs(sc_somatic)[igv_genes, ]
-# Y <- t( scale(t(Y)) )
-
-to_use <- matrixStats::rowVars(exprs(sc_somatic)) > 8
-Y <- t( scale(t(exprs(sc_somatic)[to_use, ])))
-sc_used <- sc_somatic[to_use, ]
-
-# let's look at NMD genes
-sc_nmd <- sc_somatic[fData(sc_somatic)$gene_type == "nonsense_mediated_decay", ]
-Y <- exprs(sc_nmd)[rowVars(exprs(sc_nmd)) > 2.5, ]
-Y <- t(scale(t(Y)))
+Y <- exprs(sc_lipid)
+Y <- Y[rowVars(Y) > 0.1, ]
+Y <- t( scale(t(Y)) )
 
 N <- ncol(Y)
 stopifnot(N == ncol(X))
 
 G <- nrow(Y); P = nrow(X)
 
-data_somatic <- list(N = N, G = G, P = P, X = X, Y = Y)
-
+dlist <- list(N = N, G = G, P = P, X = X, Y = Y)
 ```
 
 
-Fit model:
 
-```{r model-fitting-somatic}
-model <- stan_model("../stan/phenot.stan",
-                    model_name = "phenotime")
-model_ard <- stan_model("../stan/phenot_ard.stan",
-                       model_name = "phenotime_ard")
+```{r model-fitting}
+model <- stan_model("../stan/phenot_ard.stan",
+                    model_name = "phenotime_ard")
 
-fit <- vb(model_ard, data_somatic, grad_samples = 3)
-
-fit <- sampling(model_ard, data_somatic, chains = 1, iter = 4000, thin = 4)
+fit <- vb(model, dlist, grad_samples = 3)
+# fit <- sampling(model, dlist, iter = 40000, chains = 1, thin = 2)
+# fit <- optimizing(model, dlist)
 ```
 
-Extract results:
+Look at results - 
 
-```{r extract-somatic-results}
+```{r stan-results}
 phenotime <- posterior.mode(mcmc(extract(fit, "pst")$pst))
+sc_lipid$phenotime <- phenotime
 
-pt_df <- data_frame(phenotime,# pc1 = redDim(sc_somatic)[,1], 
-                    #pc2 = redDim(sc_somatic)[,2], 
-                    purepc1 = prcomp(t(Y), scale = TRUE)$x[,1],
-                    purepc2 = prcomp(t(Y), scale = TRUE)$x[,2],
-                     #igv_score = sc_somatic$igv_score, foxp3 = sc_somatic$foxp3,
-                    n_mutations = sc_somatic$n_mutations)
+#phenotime <- tidyMCMC(fit, "pst")
+#phenotime <- fit$par[grep("pst", names(fit$par))]
+
+pt_df <- data_frame(phenotime = scale_vec(phenotime), 
+                    igv_pca = scale_vec(prcomp(t(Y))$x[,1]),
+                     # igv_score = sc_tumour$igv_score, foxp3 = sc_tumour$foxp3,
+                     msi = factor(X[1, ])) #,
+                      # lymph = factor(X[2, ]))#, weight = X[3,])
+
+ggplot(pt_df, aes(x = igv_pca, y = phenotime, colour = msi)) + geom_point() +
+  stat_function(fun = function(x) x, linetype = 2, color = 'black')
+
+ggplot(pt_df, aes(x = phenotime, y = igv_pca, colour = lymph)) + geom_point() 
+
+
+ggplot(pt_df, aes(x = phenotime, y = igv_pca, color = weight)) +
+  geom_point() + viridis::scale_color_viridis() 
+
+ggplot(pt_df, aes(x = phenotime, y = foxp3, color = metastasis)) +
+  geom_point()
+
+ggplot(pt_df, aes(x = phenotime, y = foxp3, color = weight)) +
+  geom_point() + viridis::scale_color_viridis() 
+
 ```
 
-Some plots:
+Let's check some posteriors:
 
-```{r somatic-plots}
-ggplot(pt_df, aes(x = scale_vec(purepc1), y = scale_vec(phenotime), 
-                  color = n_mutations)) + geom_point() +
-  viridis::scale_color_viridis() + stat_function(fun = function(x) x, linetype = 2)
+```{r check-posterior}
+tidy_beta <- function(beta, n) {
+  names(beta) <- rownames(Y)
+  beta_tidy <- gather(beta, gene, value)
+  beta_tidy$beta <- n
+  return(beta_tidy)
+}
 
-ggplot(pt_df, aes(x = phenotime, y = foxp3, color = n_mutations)) + geom_point() +
-  viridis::scale_color_viridis() 
+beta_1_tidy <- tidy_beta( as_data_frame( extract(fit, "beta")$beta[,,1] ), "beta_1" )
 
-ggplot(pt_df, aes(x = purepc1, y = foxp3, color = n_mutations)) + geom_point() +
-  viridis::scale_color_viridis() 
+ggplot(beta_1_tidy, aes(x = gene, y = value)) + geom_boxplot()
 
-```
+## Look at factor loadings
 
-Check plate effect:
+c_trace <- as_data_frame(extract(fit, "c")$c)
+names(c_trace) <- rownames(Y)
+c_tidy <- gather(c_trace, gene, value)
 
-```{r plate-effect}
-data_frame(phenotime, plate = sc_nmd$plate) %>% ggplot(aes(x = plate, y = phenotime, fill = plate)) + geom_violin() + geom_jitter()
-```
-
-Check stage effect:
-
-```{r stage-effect}
-data_frame(phenotime, stage = sc_somatic$patient.stage_event.clinical_stage) %>% 
-  ggplot(aes(x = stage, y = phenotime, color = stage)) + geom_violin() +
-  geom_jitter() + theme(legend.position = 'none')
-```
-
-And look at the betas:
-
-```{r check-betas}
-beta_1_tidy <- tidy_beta( as_data_frame( extract(fit, "beta")$beta[,,1] ), "beta_1" ) %>% 
-  mutate(is_igv_gene = gene %in% igv_genes)
-
-ggplot(beta_1_tidy, aes(x = gene, y = value, fill = is_igv_gene)) + geom_boxplot() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+ggplot(c_tidy, aes(x = gene, y = value)) + geom_boxplot()
 
 # and ARD posteriors for beta1
-ard_cov <- posterior.mode(mcmc(extract(fit, "cov_tau")$cov_tau[,,1]))
-df_ard <- data_frame(ard_cov, gene = rownames(Y))
+ard_covs <- apply(extract(fit, "cov_tau")$cov_tau, 3, 
+                  function(x) posterior.mode(mcmc(x))) %>% 
+  as_data_frame()
+#names(ard_covs) <- "Metastasis" # rownames(X)
 
-df_ard$c_map <- posterior.mode(mcmc(extract(fit, "c")$c))
-df_ard$beta_map <- posterior.mode(mcmc(extract(fit, "beta")$beta[,,1]))
-df_ard %<>% mutate(is_igv_gene = gene %in% igv_genes)
+ard_cov_tidy <- mutate(ard_covs, gene = rownames(Y)) %>% 
+  gather(covariate, value, -gene)
 
-
-ggplot(df_ard, aes(x = gene, y = ard_cov, fill = is_igv_gene)) +
-  geom_bar(stat = 'identity') +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
-
-stan_hist(fit, c("a_beta", "b_beta"))
-
-## look at the alphas
-alpha_1_tidy <- tidy_beta( as_data_frame( extract(fit, "alpha")$alpha[,,1] ), "alpha_1" ) %>% 
-  mutate(is_igv_gene = gene %in% igv_genes)
-
-ggplot(alpha_1_tidy, aes(x = gene, y = value, fill = is_igv_gene)) + geom_boxplot() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
-
-```
-
-Check which genes appear to be "regulated" by somatic mutations:
-
-```{r check-genes}
-genes_reg <- filter(df_ard) %>% extract2("gene") # , ard_cov < 10)
-
-nmut <- sc_somatic$n_mutations
-
-df_gex <- as_data_frame(t(Y)) %>% 
-  mutate(phenotime, n_mutations = nmut) %>% 
-  gather(gene, expression, -phenotime, -n_mutations)
-
-ggplot(df_gex, aes(x = phenotime, y = expression, color = n_mutations)) +
-  geom_point() + facet_wrap(~ gene, scales = "free_y") + 
-  viridis::scale_color_viridis()
-
-# genes_no_reg <- filter(df_ard, ard_cov > 600, abs(c_map) > 0.04) %>% extract2("gene")
-# 
-# df_gex_noreg <- as_data_frame(t(Y[genes_no_reg,])) %>% 
-#   mutate(phenotime, n_somatic = sc_somatic$n_somatic) %>% 
-#   gather(gene, expression, -phenotime, -n_somatic)
-# 
-# ggplot(df_gex_noreg, aes(x = phenotime, y = expression, color = n_somatic)) +
-#   geom_point() + facet_wrap(~ gene, scales = "free_y") + 
-#   viridis::scale_color_viridis()
+ggplot(ard_cov_tidy, aes(x = gene, y = value)) +
+  geom_bar(stat = 'identity') + facet_wrap(~ covariate, ncol = 1)
 ```
 
 Compare beta to c:
 
 ```{r beta-to-c}
-ggplot(df_ard, aes(x = c_map, y = beta_map, color = is_igv_gene)) + geom_point()
-```
+bc <- data_frame(
+  c = posterior.mode(mcmc(extract(fit, "c")$c)),
+  beta = posterior.mode(mcmc(extract(fit, "beta")$beta[,,1]))
+)
 
-Mean mutations along pseudotime:
-
-```{r rolling-mean}
-mutations_by_phenotime <- arrange(pt_df, phenotime) %>% extract2("n_mutations")
-rolling_median <- zoo::rollmedian(mutations_by_phenotime, 101)
-plot(rolling_median)
-
-cowplot::plot_grid(ggplot(pt_df, aes(x = phenotime, y = n_mutations)) + geom_point(),
-          ggplot(pt_df, aes(x = purepc1, y = n_mutations)) + geom_point())
-
-lfit <- lm(n_mutations ~ poly(phenotime, 2), data = pt_df)
+ggplot(bc, aes(x = c, y = beta)) + geom_point()
 ```
 
 
-# Mutational signature as a phenotype
+```{r check-genes}
+m <- factor(X[1,])
+n <- factor(X[2,])
+weight <- weight_covariate
 
 
-```{r mut-sig}
-ov_mutations <- filter(OV.mutations, bcr_patient_barcode != "bcr_patient_barcode") %>% as_tibble()
+# genes_reg <- filter(ard_cov_tidy, covariate == "V3",
+#                     value < 35) %>% extract2("gene") 
+# 
+# df_gex <- as_data_frame(t(Y[genes_reg, , drop = FALSE])) %>% 
+#   mutate(phenotime, weight) %>% 
+#   gather(gene, expression, -phenotime, -weight)
+# 
+# ggplot(df_gex, aes(x = phenotime, y = expression, color = weight )) +
+#   geom_point() + facet_wrap(~ gene, scales = "free_y") +
+#   scale_color_viridis()
 
-ovm_tidy <- select(ov_mutations, gene, bcr_patient_barcode) %>% 
-  mutate(has_mutation = 1) %>% 
-  distinct() %>% 
-  filter(gene != "TP53", gene != "TTN")
 
-n_mutations <- group_by(ovm_tidy, gene) %>% summarise(n = n())
-genes_to_keep <- filter(n_mutations, n > 5) %>% extract2("gene")
+genes_reg <- filter(ard_cov_tidy, covariate == "V1",
+                    value < 10) %>% extract2("gene") 
 
-ovm_spread <- filter(ovm_tidy, gene %in% genes_to_keep) %>% 
-  spread(gene, has_mutation, fill = 0)
+df_gex <- as_data_frame(t(Y[genes_reg, , drop = FALSE])) %>% 
+  mutate(phenotime, m) %>% 
+  gather(gene, expression, -phenotime, -m)
 
-mutation_matrix <- as.matrix(ovm_spread[,-1])
-colnames(mutation_matrix) <- names(ovm_spread)[-1]
-rownames(mutation_matrix) <- ovm_spread$bcr_patient_barcode
+ggplot(df_gex, aes(x = phenotime, y = expression, color = m )) +
+  geom_point() + facet_wrap(~ gene, scales = "free_y")
 
-mutation_pca <- prcomp(mutation_matrix)
 
-# let's check the gene loadings for the first PC
-data_frame(gene = colnames(mutation_matrix), loading = mutation_pca$rotation[,1]) %>% 
-  ggplot(aes(x = gene, y = loading)) + geom_bar(stat = 'identity')
+genes_reg <- filter(ard_cov_tidy, covariate == "V2",
+                    value < 20) %>% extract2("gene") 
+
+df_gex <- as_data_frame(t(Y[genes_reg, , drop = FALSE])) %>% 
+  mutate(phenotime, n) %>% 
+  gather(gene, expression, -phenotime, -n)
+
+ggplot(df_gex, aes(x = phenotime, y = expression, color = n )) +
+  geom_point() + facet_wrap(~ gene, scales = "free_y")
+
 ```
-
-# Appendix
-
-## Prior on $\beta$
-
-If we select tau_beta from gamma(10, 0.01) then we get a prior on beta like
-
-```{r prior-on-beta}
-qplot(rnorm(10000, 0, 1 / sqrt(rgamma(10000, 1000, 1))), geom = "density")
-```
-
-which seems reasonable.

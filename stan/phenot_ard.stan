@@ -46,8 +46,8 @@ transformed parameters {
 model {
   tau ~ gamma(2, 2);
   // cov_tau ~ gamma(10, 0.01);
-   // for(g in 1:G) cov_tau[g] ~ gamma(a_beta, b_beta);
-  for(g in 1:G) cov_tau[g] ~ gamma(4.4, 0.07);
+  for(g in 1:G) cov_tau[g] ~ gamma(a_beta, b_beta);
+  //for(g in 1:G) cov_tau[g] ~ gamma(5.5, 0.3);
   
   for(p in 1:P) {
     for(g in 1:G) {
