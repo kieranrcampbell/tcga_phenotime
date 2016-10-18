@@ -389,6 +389,8 @@ sde <- switchde::switchde(sc_tumour[genes_to_use, ], pc3)
 sc_pc3 <- sc_tumour[genes_to_use, ]
 fData(sc_pc3)$is_pc3_sig <- sde$qval < 10^-20
 
+y_pc3 <- exprs(sc_pc3)[fData(sc_pc3)$is_pc3_sig, ]
+
 ggplot(fData(sc_pc3), aes(x = mean_exprs, y = var_exprs, color = is_pc3_sig)) +
   geom_point(alpha = 0.5)
 
@@ -618,19 +620,23 @@ Y <- exprs(sc_lipid)
 Y <- Y[rowVars(Y) > 0.1, ]
 y <- scale(t(Y))
 
-N <- nrow(y); G <- ncol(Y); P = ncol(X)
+to_use <- fData(sc_tumour)$var_exprs > 7
+y <- scale(t(exprs(sc_tumour[to_use,])))
 
-msi_cov <- 1 * (sc_tumour$msi_status == "msi-h")
+N <- nrow(y); G <- ncol(y); P = ncol(X)
 
-x <- matrix(msi_cov, ncol = 1)
+msi_cov <- 1 - 1 * (sc_tumour$msi_status == "msi-h")
+
+x <- (matrix(msi_cov, ncol = 1))
 
 source("../gibbs/phenotime.R")
 
-gibbs <- phenot(y, x, iter = 1000)
+gibbs <- phenot(y, x, iter = 10, burn = 5)
 
 qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
 tmap <- colMeans(gibbs$pst_trace)
 pc1 <- prcomp(y)$x[,1]
+pc2 <- prcomp(y)$x[,2]
 
 data_frame(tmap, pc1, msi = factor(x[,1])) %>% 
   ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
@@ -638,4 +644,9 @@ data_frame(tmap, pc1, msi = factor(x[,1])) %>%
 
 tau_pg_map <- matrixStats::colMedians(gibbs$tau_pg_trace[,1,])
 plot(tau_pg_map)
+
+data_frame(y = y[, 159], tmap, msi = factor(x[,1])) %>% 
+  ggplot(aes(x = tmap, y = y, color = msi)) + geom_point()
+
+
 ```
