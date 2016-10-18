@@ -1,4 +1,4 @@
-## Gibbs sampling for mixture of factor analyzers
+## Gibbs sampling for phenotime
 ## kieran.campbell@sjc.ox.ac.uk
 
 rbernoulli <- function(pi) sapply(pi, function(p) sample(c(0,1), 1, 
@@ -25,34 +25,26 @@ log_sum_exp <- function(x) log(sum(exp(x - max(x)))) + max(x)
 #' Calculate the log-posterior during inference
 #' 
 #' @importFrom stats dgamma dnorm
-posterior <- function(y, c, k, pst, tau, gamma, theta, eta, chi, tau_c, r, alpha, beta,
-                      theta_tilde, eta_tilde, tau_theta, tau_eta, alpha_chi, beta_chi) {
+posterior <- function(y, x, pst, c, alpha, beta, tau) {
   G <- ncol(y)
   N <- nrow(y)
-  b <- ncol(k)
+  P <- ncol(x)
+
+  # work out the mean for each cell
+  mu <- matrix(NA, nrow = N, ncol = G)
+  for(i in seq_len(N)) {
+    for(g in seq_len(G)) {
+      mu[i,g] <- pst[i] * c[g]
+      for(p in seq_len(P))
+        mu[i,g] <- mu[i,g] + alpha[p,g] * x[i,p] + pst[i] * beta[p,g] * x[i,p]
+    }
+  }
   
-  branch_likelihoods <- sapply(seq_len(b), function(branch) {
-    ll_branch <- sapply(seq_len(N), function(i) {
-        sum(dnorm(y[i,], c[,branch] + k[,branch] * pst[i], 1 / sqrt(tau), log = TRUE))
-    })
-    sum(ll_branch[gamma == branch])
-  })
-    
-  ll <- sum(branch_likelihoods)
+  ll_i <- sapply(seq_len(N), function(i) sum(dnorm(y[i,], mu[i,], 1 / sqrt(tau), log = TRUE)))
+
+  ll <- sum(ll_i)
   
-  prior <- 
-    sum(dnorm(theta, theta_tilde, 1 / sqrt(tau_theta), log = TRUE)) +
-    sum(dnorm(eta, eta_tilde, 1 / sqrt(tau_eta), log = TRUE)) +
-    sum(dgamma(tau, alpha, beta, log = TRUE)) +
-    sum(dnorm(pst, 0, 1 / r, log = TRUE)) +
-    sum(dgamma(chi, alpha_chi, beta_chi, log = TRUE)) 
-  
-  k_prior <- sum( apply(k, 2, function(k_b) sum(dnorm(k_b, theta, 1 / sqrt(chi), log = TRUE))) )
-  c_prior <- sum( sapply(seq_len(b), function(branch) sum(dnorm(c[,branch], eta[branch], 1 / sqrt(tau_c), log = TRUE)))) 
-  
-  prior <- prior + k_prior + c_prior
-  
-  return( ll + prior )
+  return( ll  )
 }
 
 
@@ -143,26 +135,27 @@ phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2, b = 2,
     if((it > burn) && (it %% thin == 0)) {
       sample_pos <- (it - burn) / thin
       
-            
+      c_trace[sample_pos,] <- c
+      alpha_trace[sample_pos,,] <- alpha
+      beta_trace[sample_pos,,] <- beta
       
       tau_trace[sample_pos,] <- tau
       pst_trace[sample_pos,] <- pst
+      tau_pg_trace[sample_pos,,] <- tau_pg
 
-      post <- posterior(y, c, k, pst,
-                        tau, gamma, theta, eta, chi, tau_c, r,
-                        alpha, beta, theta_tilde, 
-                        eta_tilde, tau_theta, tau_eta,
-                        alpha_chi, beta_chi)
-      lp_trace[sample_pos,] <- post 
+      lp_trace[sample_pos,] <- posterior(y, x, pst, c, alpha, beta, tau)
     }
   }
-  traces <- list(tau_trace = tau_trace, gamma_trace = gamma_trace,
-                      pst_trace = pst_trace, theta_trace = theta_trace, lambda_theta_trace = lambda_theta_trace, chi_trace = chi_trace,
-                      eta_trace = eta_trace, lp_trace = lp_trace)
-  phenotime_res <- structure(list(traces = traces, iter = iter, thin = thin, burn = burn,
-                            b = b, collapse = collapse, N = N, G = G,
-                            feature_names = feature_names, cell_names = cell_names), 
-                       class = "mfa")
+  traces <- list(tau_trace = tau_trace, lp_trace = lp_trace, c_trace = c_trace,
+                 beta_trace = beta_trace, alpha_trace = alpha_trace, pst_trace = pst_trace,
+                 tau_pg_trace = tau_pg_trace)
+  
+  # phenotime_res <- structure(list(traces = traces, iter = iter, thin = thin, burn = burn,
+  #                           b = b, collapse = collapse, N = N, G = G,
+  #                           feature_names = feature_names, cell_names = cell_names), 
+  #                      class = "mfa")
+  
+  return(tau_pg_trace)
 }
 
 

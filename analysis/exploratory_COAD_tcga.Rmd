@@ -608,3 +608,6 @@ ggplot(df_gex, aes(x = phenotime, y = expression, color = n )) +
   geom_point() + facet_wrap(~ gene, scales = "free_y")
 
 ```
+
+
+# Gibbs sampling
