@@ -611,3 +611,31 @@ ggplot(df_gex, aes(x = phenotime, y = expression, color = n )) +
 
 
 # Gibbs sampling
+
+```{r gibbs}
+
+Y <- exprs(sc_lipid)
+Y <- Y[rowVars(Y) > 0.1, ]
+y <- scale(t(Y))
+
+N <- nrow(y); G <- ncol(Y); P = ncol(X)
+
+msi_cov <- 1 * (sc_tumour$msi_status == "msi-h")
+
+x <- matrix(msi_cov, ncol = 1)
+
+source("../gibbs/phenotime.R")
+
+gibbs <- phenot(y, x, iter = 1000)
+
+qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
+tmap <- colMeans(gibbs$pst_trace)
+pc1 <- prcomp(y)$x[,1]
+
+data_frame(tmap, pc1, msi = factor(x[,1])) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
+
+tau_pg_map <- matrixStats::colMedians(gibbs$tau_pg_trace[,1,])
+plot(tau_pg_map)
+```

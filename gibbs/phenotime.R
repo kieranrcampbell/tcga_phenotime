@@ -59,7 +59,7 @@ to_ggmcmc <- function(g) {
 }
 
 
-phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2, b = 2,
+phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2, 
                 pc_initialise = 1, tau_alpha = 1, tau_c = 1, a = 2, b = 1,
                 a_beta = 6, b_beta = 0.01) {
   
@@ -155,7 +155,7 @@ phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2, b = 2,
   #                           feature_names = feature_names, cell_names = cell_names), 
   #                      class = "mfa")
   
-  return(tau_pg_trace)
+  return(traces)
 }
 
 
