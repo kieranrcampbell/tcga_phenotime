@@ -1,0 +1,301 @@
+---
+title: "Exploratory analysis of TCGA OV data"
+author: "Kieran Campbell"
+date: "9 October 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(scater)
+library(tidyverse)
+library(magrittr)
+library(matrixStats)
+library(ggrepel)
+library(rstan)
+library(MCMCglmm)
+library(coda)
+library(cowplot)
+library(biomaRt)
+library(Rcpp)
+
+source("../gibbs/phenotime.R")
+sourceCpp("../gibbs/phenotime.cpp")
+
+set.seed(123L)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+# Data perparation
+
+```{r data-prep, include = TRUE, message = FALSE}
+load("../data/sce_coad_kallisto.Rdata")
+sce <- sce[matrixStats::rowVars(tpm(sce)) > 0, ]
+
+is_exprs(sce) <- tpm(sce) > 0
+
+
+sce <- calculateQCMetrics(sce)
+
+
+hgnc_symbols <- sapply(strsplit(featureNames(sce), "_"), `[`, 2)
+
+dvar <- data_frame(var_exprs = matrixStats::rowVars(exprs(sce)),
+                   hgnc_symbols, gene = featureNames(sce))
+fData(sce) <- cbind(fData(sce), dvar)
+
+set.seed(123L)
+sce <- plotPCA(sce, ncomponents = 3,
+               colour_by = "short_plate",
+               return_SCESet = TRUE)
+
+
+sc <- sce[, redDim(sce)[,1] < 0 & redDim(sce)[,3] > -10]
+
+## After subsetting, re-calculate QC metrics
+sc <- calculateQCMetrics(sc)
+rm(sce) # can't store large sceset (??)
+```
+
+And let's plot this and colour by tumour / normal:
+
+```{r sc-pca}
+plotPCA(sc, colour_by = "sample_type", ncomponents = 3)
+```
+
+And create an SCESet using just the tumour samples:
+
+```{r create tumour-only dataset}
+sc_tumour <- sc[, sc$sample_type != "normal"]
+```
+
+Finally construct the x matrix for microsatellite instability:
+
+```{r construct-x}
+msi_cov <- 1 * (sc_tumour$msi_status == "msi-h") 
+x <- (matrix(msi_cov, ncol = 1))
+```
+
+
+# Using high-variance genes
+
+Data prep:
+
+```{r gibbs}
+to_use <- fData(sc_tumour)$var_exprs > 6
+print(table(to_use))
+y <- scale(t(exprs(sc_tumour[to_use,])))
+```
+
+Gibbs sample:
+
+```{r gibbs-sample}
+gibbs <- phenot(y, x, iter = 2000)
+```
+
+Diagnostic plot:
+
+```{r diagnostic}
+save(gibbs, file = "../data/gibbs_highvar.Rdata")
+qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
+```
+
+Then extract MAP ordering and compare to PCA:
+
+```{r map-to-pca}
+tmap <- colMeans(gibbs$pst_trace)
+pc1 <- prcomp(y)$x[,1]
+pc2 <- prcomp(y)$x[,2]
+
+data_frame(tmap, pc1, msi = factor(x[,1])) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
+```
+
+We also want to find genes that show an interaction:
+
+```{r find-interaction-genes}
+int_df <- data_frame(
+  tau_pg_map = matrixStats::colMedians(gibbs$tau_pg_trace[,1,]),
+  beta_mean = colMeans(gibbs$beta_trace[,1,]),
+  c_mean = colMeans(gibbs$c_trace)
+)
+
+abs_beta_cutoff <- 0.1
+tau_cutoff <- 58
+
+ggplot(int_df, aes(x = abs(beta_mean), y = 1 / tau_pg_map, fill = abs(c_mean))) +
+  geom_point(shape = 21, size = 3, alpha = 0.9) + viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab("Coefficient magnitude") + ylab("Posterior variance") +
+  geom_hline(yintercept = 1 / tau_cutoff, linetype = 2, color = "grey") +
+  geom_vline(xintercept = abs_beta_cutoff, linetype = 2, color = "grey")
+```
+
+We can plot gene expression along phenotime coloured by MSI status:
+
+```{r expression_along_phenotime}
+features_to_keep <- int_df$tau_pg_map < tau_cutoff & abs(int_df$beta_mean) > abs_beta_cutoff
+
+as_data_frame(y[, features_to_keep]) %>% 
+  mutate(phenotime = tmap, msi = factor(x[,1])) %>% 
+  gather(gene, expression, -phenotime, -msi) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = msi)) +
+  geom_point(alpha = 0.6) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1")
+```
+
+
+
+# Using NMD genes
+
+Data prep:
+
+```{r nmd-data-prep}
+to_use <- fData(sc_tumour)$var_exprs > 2 &
+  fData(sc_tumour)$gene_type == "nonsense_mediated_decay"
+print(table(to_use))
+y <- scale(t(exprs(sc_tumour[to_use,])))
+```
+
+Gibbs sample:
+
+```{r gibbs-sample-nmd}
+gibbs <- phenot(y, x, iter = 2000)
+```
+
+Diagnostic plot:
+
+```{r diagnostic-nmd}
+qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
+```
+
+Then extract MAP ordering and compare to PCA:
+
+```{r map-to-pca-nmd}
+tmap <- colMeans(gibbs$pst_trace)
+pc1 <- prcomp(y)$x[,1]
+pc2 <- prcomp(y)$x[,2]
+
+data_frame(tmap, pc1, msi = factor(x[,1])) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
+```
+
+We also want to find genes that show an interaction:
+
+```{r find-interaction-genes-nmd}
+int_df <- data_frame(
+  tau_pg_map = matrixStats::colMedians(gibbs$tau_pg_trace[,1,]),
+  beta_mean = colMeans(gibbs$beta_trace[,1,]),
+  c_mean = colMeans(gibbs$c_trace)
+)
+
+abs_beta_cutoff <- 0.14
+tau_cutoff <- 56
+
+ggplot(int_df, aes(x = abs(beta_mean), y = 1 / tau_pg_map, fill = abs(c_mean))) +
+  geom_point(shape = 21, size = 3, alpha = 0.9) + viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab("Coefficient magnitude") + ylab("Posterior variance") +
+  geom_hline(yintercept = 1 / tau_cutoff, linetype = 2, color = "grey") +
+  geom_vline(xintercept = abs_beta_cutoff, linetype = 2, color = "grey")
+```
+
+We can plot gene expression along phenotime coloured by MSI status:
+
+```{r expression_along_phenotime-nmd}
+features_to_keep <- int_df$tau_pg_map < tau_cutoff & abs(int_df$beta_mean) > abs_beta_cutoff
+
+as_data_frame(y[, features_to_keep]) %>% 
+  mutate(phenotime = tmap, msi = factor(x[,1])) %>% 
+  gather(gene, expression, -phenotime, -msi) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = msi)) +
+  geom_point(alpha = 0.6) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1")
+```
+
+
+
+
+# Using lipid metabolism genes
+
+Data prep:
+
+```{r lipid-data-prep}
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+go_lipid <- "GO:0006629" # lipid metabolic process
+
+la <- getBM(c("ensembl_transcript_id", "ensembl_gene_id"), filters = "go_id",
+                   values = go_lipid, mart = ensembl)
+
+fData(sc_tumour)$ensembl_transcript_id <- 
+  sapply(strsplit(featureNames(sc_tumour), ".", fixed = TRUE), `[`, 1)
+fData(sc_tumour)$is_lipid_transcript <- 
+  fData(sc_tumour)$ensembl_transcript_id %in% la$ensembl_transcript_id
+
+sc_lipid <- sc_tumour[fData(sc_tumour)$is_lipid_transcript &
+                        fData(sc_tumour)$var_exprs > 0.1, ]
+
+
+
+y <- scale(t(exprs(sc_lipid)))
+```
+
+Gibbs sample:
+
+```{r gibbs-sample-lipid}
+gibbs <- phenot(y, x, iter = 2000)
+```
+
+Diagnostic plot:
+
+```{r diagnostic-lipid}
+qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
+```
+
+Then extract MAP ordering and compare to PCA:
+
+```{r map-to-pca-nmd-lipid}
+tmap <- colMeans(gibbs$pst_trace)
+pc1 <- prcomp(y)$x[,1]
+pc2 <- prcomp(y)$x[,2]
+
+data_frame(tmap, pc1, msi = factor(x[,1])) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
+```
+
+We also want to find genes that show an interaction:
+
+```{r find-interaction-genes-lipid}
+int_df <- data_frame(
+  tau_pg_map = matrixStats::colMedians(gibbs$tau_pg_trace[,1,]),
+  beta_mean = colMeans(gibbs$beta_trace[,1,]),
+  c_mean = colMeans(gibbs$c_trace)
+)
+
+abs_beta_cutoff <- 0.1
+tau_cutoff <- 60
+
+ggplot(int_df, aes(x = abs(beta_mean), y = 1 / tau_pg_map, fill = abs(c_mean))) +
+  geom_point(shape = 21, size = 3, alpha = 0.9) + viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab("Coefficient magnitude") + ylab("Posterior variance") +
+  geom_hline(yintercept = 1 / tau_cutoff, linetype = 2, color = "grey") +
+  geom_vline(xintercept = abs_beta_cutoff, linetype = 2, color = "grey")
+```
+
+We can plot gene expression along phenotime coloured by MSI status:
+
+```{r expression_along_phenotime-lipid}
+features_to_keep <- int_df$tau_pg_map < tau_cutoff & abs(int_df$beta_mean) > abs_beta_cutoff
+
+as_data_frame(y[, features_to_keep]) %>% 
+  mutate(phenotime = tmap, msi = factor(x[,1])) %>% 
+  gather(gene, expression, -phenotime, -msi) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = msi)) +
+  geom_point(alpha = 0.6) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1")
+```
+
+

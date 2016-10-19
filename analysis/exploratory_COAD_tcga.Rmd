@@ -620,7 +620,7 @@ Y <- exprs(sc_lipid)
 Y <- Y[rowVars(Y) > 0.1, ]
 y <- scale(t(Y))
 
-to_use <- fData(sc_tumour)$var_exprs > 7
+to_use <- fData(sc_tumour)$var_exprs > 6
 y <- scale(t(exprs(sc_tumour[to_use,])))
 
 N <- nrow(y); G <- ncol(y); P = ncol(X)
@@ -631,7 +631,7 @@ x <- (matrix(msi_cov, ncol = 1))
 
 source("../gibbs/phenotime.R")
 
-gibbs <- phenot(y, x, iter = 1000)
+gibbs <- phenot(y, x, iter = 2000)
 
 qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
 tmap <- colMeans(gibbs$pst_trace)
@@ -645,10 +645,15 @@ data_frame(tmap, pc1, msi = factor(x[,1])) %>%
 tau_pg_map <- matrixStats::colMedians(gibbs$tau_pg_trace[,1,])
 plot(tau_pg_map)
 
-data_frame(y = y[, 121], tmap, msi = factor(x[,1])) %>% 
+data_frame(y = y[, 8], tmap, msi = factor(x[,1])) %>% 
   ggplot(aes(x = tmap, y = y, color = msi)) + geom_point()
 
 beta_mean <- colMeans(gibbs$beta_trace[,1,])
 c_mean <- colMeans(gibbs$c_trace)
 tau_mean <- colMeans(gibbs$tau_trace)
+
+plot(c_mean, beta_mean)
+plot(abs(beta_mean), tau_pg_map)
+
+
 ```
