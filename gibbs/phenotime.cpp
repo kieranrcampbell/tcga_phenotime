@@ -53,6 +53,7 @@ NumericVector sample_c(NumericMatrix y, NumericMatrix x,
 // [[Rcpp::export]]
 NumericVector sample_pst(NumericMatrix y, NumericMatrix x,
                        NumericMatrix alpha, NumericMatrix beta,
+                       NumericVector q, double tau_q,
                        NumericVector c, 
                        NumericVector tau) {
   
@@ -67,7 +68,7 @@ NumericVector sample_pst(NumericMatrix y, NumericMatrix x,
   std::fill(mu.begin(), mu.end(), 0.0);
   
   NumericVector mu_new(N, 0.0);
-  NumericVector tau_new(N, 1.0);
+  NumericVector tau_new(N, tau_q);
   
   for(int i = 0; i < N; i++) {
     for(int g = 0; g < G; g++) {
@@ -80,6 +81,7 @@ NumericVector sample_pst(NumericMatrix y, NumericMatrix x,
       tau_new[i] += tau[g] * k(i,g) * k(i,g);
       mu_new[i] += tau[g] * k(i,g) * (y(i,g) - mu(i,g));
     }
+    mu_new[i] += tau_q * q[i];
     mu_new[i] /= tau_new[i];
   }
   
