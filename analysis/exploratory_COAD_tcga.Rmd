@@ -625,13 +625,13 @@ y <- scale(t(exprs(sc_tumour[to_use,])))
 
 N <- nrow(y); G <- ncol(y); P = ncol(X)
 
-msi_cov <- 1 - 1 * (sc_tumour$msi_status == "msi-h")
+msi_cov <- 1 * (sc_tumour$msi_status == "msi-h") 
 
 x <- (matrix(msi_cov, ncol = 1))
 
 source("../gibbs/phenotime.R")
 
-gibbs <- phenot(y, x, iter = 10, burn = 5)
+gibbs <- phenot(y, x, iter = 1000)
 
 qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
 tmap <- colMeans(gibbs$pst_trace)
@@ -645,8 +645,10 @@ data_frame(tmap, pc1, msi = factor(x[,1])) %>%
 tau_pg_map <- matrixStats::colMedians(gibbs$tau_pg_trace[,1,])
 plot(tau_pg_map)
 
-data_frame(y = y[, 159], tmap, msi = factor(x[,1])) %>% 
+data_frame(y = y[, 121], tmap, msi = factor(x[,1])) %>% 
   ggplot(aes(x = tmap, y = y, color = msi)) + geom_point()
 
-
+beta_mean <- colMeans(gibbs$beta_trace[,1,])
+c_mean <- colMeans(gibbs$c_trace)
+tau_mean <- colMeans(gibbs$tau_trace)
 ```

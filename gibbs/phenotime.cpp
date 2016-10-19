@@ -31,10 +31,13 @@ NumericVector sample_c(NumericMatrix y, NumericMatrix x,
   NumericVector tau_new(G);
   NumericVector mu_new(G, 0.0);
   
+  double pst_square_sum = 0.0;
+  for(int i = 0; i < N; i++) pst_square_sum += pst[i] * pst[i];
+  
   for(int g = 0; g < G; g++) { 
-    tau_new[g] = tau_c + N * tau[g];
+    tau_new[g] = tau_c + pst_square_sum * tau[g];
     for(int i = 0; i < N; i++) {
-      mu_new[g] += tau[g] * (y(i,g) - mu(i,g));
+      mu_new[g] += tau[g] * pst[i] * (y(i,g) - mu(i,g));
     }
     mu_new[g] /= tau_new[g];
   }
@@ -154,7 +157,7 @@ NumericMatrix sample_alpha(NumericMatrix y, NumericMatrix x, NumericVector pst,
           if(pp != p) mu_tilde += pst[i] * beta(p,g) * x(i,p);
           mu_tilde += alpha(p,g) * x(i,p);
         }
-        mu_new_pg += pst[i] * x(i,p) * (y(i,g) - mu_tilde);
+        mu_new_pg += tau[g] * pst[i] * x(i,p) * (y(i,g) - mu_tilde);
       }
       mu_new_pg /= tau_new_pg;
       beta(p,g) = as<double>(rnorm(1, mu_new_pg, 1 / sqrt(tau_new_pg)));
@@ -166,7 +169,7 @@ NumericMatrix sample_alpha(NumericMatrix y, NumericMatrix x, NumericVector pst,
 
 // [[Rcpp::export]]
 NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector pst,
-                          NumericMatrix alpha, NumericMatrix beta,
+                          NumericMatrix alpha, NumericMatrix beta, NumericMatrix tau_pg,
                           NumericVector c, double a, double b) {
   
   int G = y.ncol();
@@ -187,10 +190,12 @@ NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector pst,
   NumericVector tau(G);
   for(int g = 0; g < G; g++) {
     double b_new = b;
-    for(int i = 0; i < N; i++) {
+    for(int i = 0; i < N; i++) 
       b_new += 0.5 * (y(i,g) - mu(i,g)) * (y(i,g) - mu(i,g));
-    }
-    tau(g) = as<double>(rgamma(1, a + N / 2, 1 / b_new)); // !!! RCPP gamma parametrised by shape - scale
+    for(int p = 0; p < P; p++)
+      b_new += 0.5 * tau_pg(p,g) * beta(p,g) * beta(p,g);
+    
+    tau(g) = as<double>(rgamma(1, a + N / 2 + P / 2, 1 / b_new)); // !!! RCPP gamma parametrised by shape - scale
   }
   return tau;
 }

@@ -61,7 +61,7 @@ to_ggmcmc <- function(g) {
 
 phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2, 
                 pc_initialise = 1, tau_alpha = 1, tau_c = 1, a = 2, b = 1,
-                a_beta = 6, b_beta = 0.01) {
+                a_beta = 6, b_beta = 0.1) {
   
   # set.seed(seed)
   N <- nrow(y)
@@ -125,7 +125,7 @@ phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2,
     pst <- sample_pst(y, x, alpha, beta, c, tau)
     
     # Sample tau
-    tau <- sample_tau(y, x, pst, alpha, beta, c, a, b);
+    tau <- sample_tau(y, x, pst, alpha, beta, tau_pg, c, a, b);
     
     # Sample tau_pg
     tau_pg <- sample_tau_pg(beta, tau, a_beta, b_beta);
