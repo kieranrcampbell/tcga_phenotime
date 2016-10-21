@@ -25,7 +25,7 @@ log_sum_exp <- function(x) log(sum(exp(x - max(x)))) + max(x)
 #' Calculate the log-posterior during inference
 #' 
 #' @importFrom stats dgamma dnorm
-posterior <- function(y, x, pst, c, alpha, beta, tau) {
+posterior <- function(y, x, pst, c, eta, alpha, beta, tau) {
   G <- ncol(y)
   N <- nrow(y)
   P <- ncol(x)
@@ -34,7 +34,7 @@ posterior <- function(y, x, pst, c, alpha, beta, tau) {
   mu <- matrix(NA, nrow = N, ncol = G)
   for(i in seq_len(N)) {
     for(g in seq_len(G)) {
-      mu[i,g] <- pst[i] * c[g]
+      mu[i,g] <- eta[g] + pst[i] * c[g]
       for(p in seq_len(P))
         mu[i,g] <- mu[i,g] + alpha[p,g] * x[i,p] + pst[i] * beta[p,g] * x[i,p]
     }
@@ -59,6 +59,12 @@ to_ggmcmc <- function(g) {
 }
 
 
+#' Gibbs sampling for phenotime
+#' 
+#' @param y A sample-by-gene expression matrix
+#' @param x A sample-by-variable covariate matrix
+#' @param q An (optional) vector of priors for pseudotime
+#' 
 phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2, 
                   q = rep(0, nrow(y)), tau_q = 1, 
                   pc_initialise = 1, tau_alpha = 1, tau_c = 1, a = 2, b = 1,
@@ -92,6 +98,7 @@ phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2,
   alpha <- matrix(0, nrow = P, ncol = G)
   beta <- matrix(0, nrow = P, ncol = G)
   c <- rep(0, G)
+  eta <- rep(0, G)
   
   tau_pg <- matrix(rgamma(P * G, a_beta, b_beta), nrow = P, ncol  = G)
   
@@ -106,6 +113,7 @@ phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2,
   pst_trace <- mcmcify2("pst", nsamples, N)
   tau_trace <- mcmcify2("tau", nsamples, G)
   tau_pg_trace <- mcmcify2("tau_pg", nsamples, P, G)
+  eta_trace <- mcmcify2("eta", nsamples, G)
   
   lp_trace <- mcmcify2("lp__", nsamples, 1)
   
@@ -114,22 +122,25 @@ phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2,
   for(it in 1:iter) {
     
     # Sample alpha
-    alpha <- sample_alpha(y, x, pst, tau_alpha, alpha, beta, c, tau);
+    alpha <- sample_alpha(y, x, eta, pst, tau_alpha, alpha, beta, c, tau);
     
     # Sample beta
-    beta <- sample_beta(y, x, pst, tau_alpha, alpha, beta, c, tau, tau_pg);
+    beta <- sample_beta(y, x, eta, pst, tau_alpha, alpha, beta, c, tau, tau_pg);
     
     # Sample c
-    c <- sample_c(y, x, alpha, beta, pst, tau, tau_c)
+    c <- sample_c(y, x, eta, alpha, beta, pst, tau, tau_c)
     
     # Sample pst
-    pst <- sample_pst(y, x, alpha, beta, q, tau_q, c, tau)
+    pst <- sample_pst(y, x, eta, alpha, beta, q, tau_q, c, tau)
     
     # Sample tau
-    tau <- sample_tau(y, x, pst, alpha, beta, tau_pg, c, a, b);
+    tau <- sample_tau(y, x, eta, pst, alpha, beta, tau_pg, c, a, b);
     
     # Sample tau_pg
     tau_pg <- sample_tau_pg(beta, tau, a_beta, b_beta);
+    
+    # Sample eta
+    eta <- sample_eta(y, x, pst, c, alpha, beta, tau)
     
     
     # Add some relevant variables to trace    
@@ -143,13 +154,15 @@ phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2,
       tau_trace[sample_pos,] <- tau
       pst_trace[sample_pos,] <- pst
       tau_pg_trace[sample_pos,,] <- tau_pg
+      
+      eta_trace[sample_pos,] <- eta
 
-      lp_trace[sample_pos,] <- posterior(y, x, pst, c, alpha, beta, tau)
+      lp_trace[sample_pos,] <- posterior(y, x, pst, c, eta, alpha, beta, tau)
     }
   }
   traces <- list(tau_trace = tau_trace, lp_trace = lp_trace, c_trace = c_trace,
                  beta_trace = beta_trace, alpha_trace = alpha_trace, pst_trace = pst_trace,
-                 tau_pg_trace = tau_pg_trace)
+                 tau_pg_trace = tau_pg_trace, eta_trace = eta_trace)
   
   # phenotime_res <- structure(list(traces = traces, iter = iter, thin = thin, burn = burn,
   #                           b = b, collapse = collapse, N = N, G = G,

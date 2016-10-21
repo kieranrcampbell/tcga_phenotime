@@ -1,5 +1,5 @@
 ---
-title: "Exploratory analysis of TCGA OV data"
+title: "Exploratory analysis of TCGA COAD data"
 author: "Kieran Campbell"
 date: "9 October 2016"
 output: html_document
@@ -84,7 +84,7 @@ x <- (matrix(msi_cov, ncol = 1))
 Data prep:
 
 ```{r gibbs}
-to_use <- fData(sc_tumour)$var_exprs > 6
+to_use <- fData(sc_tumour)$var_exprs > 6 # 7!!!
 print(table(to_use))
 y <- scale(t(exprs(sc_tumour[to_use,])))
 ```
@@ -326,13 +326,30 @@ as_data_frame(y[, features_to_keep]) %>%
 
 
 ```{r construct-priors}
-sorted_unique <- sort(unique(sc_lipid$stage))
-priors <- as.numeric(plyr::mapvalues(sc_lipid$stage, from = sorted_unique, to = seq_along(sorted_unique)))
+stage <- sc_lipid$stage
+
+# parse stages
+final_letter <- sapply(stage, function(s) str_sub(s, -1, -1))
+to_trim <- final_letter %in% letters[1:3]
+stage[to_trim] <- sapply(stage[to_trim], 
+                                 function(s) str_sub(s, 1, -2))
+stage <- toupper(sapply(stage, function(x) gsub("stage ", "", x)))
+
+priors <- as.numeric(as.roman(stage))
 priors[is.na(priors)] <- mean(priors, na.rm = TRUE)
+priors <- scale_vec(priors)
+
+## Metastasis priors
+priors <- 1 * (sc_tumour$m_stage == "m0")
+priors[is.na(priors)] <- mean(priors, na.rm = TRUE)
+
+to_use <- fData(sc_tumour)$var_exprs > 7
+print(table(to_use))
+y <- scale(t(exprs(sc_tumour[to_use,])))
 ```
 
 ```{r gibbs-sample-lipid}
-gibbs <- phenot(y, x, q = priors, iter = 2000)
+gibbs <- phenot(y, x, q = priors, tau_q = 1, iter = 1000)
 ```
 
 Diagnostic plot:
@@ -351,6 +368,10 @@ pc2 <- prcomp(y)$x[,2]
 data_frame(tmap, pc1, msi = factor(x[,1])) %>% 
   ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
   scale_color_brewer(palette = "Set1") + ylab("phenotime")
+
+data_frame(tmap, pc1, stage = factor(x[,2])) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = stage)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
 ```
 
 
@@ -358,19 +379,167 @@ We also want to find genes that show an interaction:
 
 ```{r find-interaction-genes-lipid}
 int_df <- data_frame(
-  tau_pg_map = matrixStats::colMedians(gibbs$tau_pg_trace[,1,]),
-  beta_mean = colMeans(gibbs$beta_trace[,1,]),
-  c_mean = colMeans(gibbs$c_trace)
+  tau_pg_1_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,1,]),
+  beta_1_mean = colMeans(gibbs$beta_trace[,1,]),
+  tau_pg_2_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,2,]),
+  beta_2_mean = colMeans(gibbs$beta_trace[,2,])
 )
 
-abs_beta_cutoff <- 0.1
-tau_cutoff <- 60
+abs_beta_cutoff <- 0.15
+tau_cutoff <- 59
+
+ggplot(int_df, aes(x = abs(beta_1_mean), y = 1 / tau_pg_1_mean)) +
+  geom_point(size = 3, alpha = 0.9) + 
+  xlab("Coefficient magnitude") + ylab("Posterior variance") +
+  geom_hline(yintercept = 1 / tau_cutoff, linetype = 2, color = "grey") +
+  geom_vline(xintercept = abs_beta_cutoff, linetype = 2, color = "grey")
+
+
+ggplot(int_df, aes(x = abs(beta_2_mean), y = 1 / tau_pg_2_mean)) +
+  geom_point(size = 3, alpha = 0.9) + 
+  xlab("Coefficient magnitude") + ylab("Posterior variance") +
+  geom_hline(yintercept = 1 / tau_cutoff, linetype = 2, color = "grey") +
+  geom_vline(xintercept = abs_beta_cutoff, linetype = 2, color = "grey")
+
+
+```
+
+We can plot gene expression along phenotime coloured by MSI status:
+
+```{r expression_along_phenotime-lipid, fig.width = 10}
+features_to_keep <- int_df$tau_pg_2_mean < tau_cutoff & abs(int_df$beta_2_mean) > abs_beta_cutoff
+
+as_data_frame(y[, features_to_keep]) %>% 
+  mutate(phenotime = tmap, msi = factor(x[,2])) %>% 
+  gather(gene, expression, -phenotime, -msi) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = msi)) +
+  geom_point(alpha = 0.6) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1")
+```
+
+And plot gene expression for common genes:
+
+```{r common-genes}
+features_to_keep <- abs(int_df$c_mean) > 1 & abs(int_df$beta_mean) < 0.01
+
+as_data_frame(y[, features_to_keep]) %>% 
+  mutate(phenotime = tmap, msi = factor(x[,1])) %>% 
+  gather(gene, expression, -phenotime, -msi) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = msi)) +
+  geom_point(alpha = 0.6) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1")
+```
+
+See if any concordance with stages:
+
+```{r conc-with-stages}
+data_frame(stage = factor(priors), phenotime = tmap) %>% 
+  ggplot(aes(x = stage, y = phenotime)) + geom_violin() +
+  geom_jitter(alpha = 0.5)
+```
+
+```{r days-to-death}
+sc_tumour$phenotime <- tmap
+
+pd_nonzero <- pData(sc_tumour) %>% 
+  dplyr::select(phenotime, patient.days_to_death, msi_status) %>% 
+  dplyr::filter(!is.na(patient.days_to_death), patient.days_to_death > 0)
+
+ggplot(pd_nonzero, aes(x = phenotime, y = log10(patient.days_to_death),
+                       color = msi_status)) +
+  geom_point()
+
+
+fit <- lm(log10(patient.days_to_death) ~ phenotime, data = pd_nonzero)
+```
+
+
+# With stage and msi as covariates
+
+
+```{r construct-priors}
+stage <- sc_lipid$stage
+
+# parse stages
+final_letter <- sapply(stage, function(s) str_sub(s, -1, -1))
+to_trim <- final_letter %in% letters[1:3]
+stage[to_trim] <- sapply(stage[to_trim], 
+                                 function(s) str_sub(s, 1, -2))
+stage <- toupper(sapply(stage, function(x) gsub("stage ", "", x)))
+
+# x_stage <- as.numeric(as.roman(stage))
+# x_stage[is.na(x_stage)] <- mean(x_stage, na.rm = TRUE)
+# x_stage <- scale_vec(x_stage)
+
+x_metastasis <- 1 * (sc_tumour$m_stage != "m0")
+x_metastasis[is.na(x_metastasis)] <- mean(x_metastasis, na.rm = TRUE)
+x_metastasis <- scale_vec(x_metastasis)
+
+x_msi <- scale_vec( 1 * (sc_tumour$msi_status == "msi-h") )
+
+x <- cbind(x_msi, x_metastasis)
+
+
+to_use <- fData(sc_tumour)$var_exprs > 7
+print(table(to_use))
+y <- scale(t(exprs(sc_tumour[to_use,])))
+```
+
+```{r gibbs-sample-lipid}
+gibbs <- phenot(y, x[,2], iter = 1000, thin = 1)
+```
+
+Diagnostic plot:
+
+```{r diagnostic-lipid}
+qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
+```
+
+Then extract MAP ordering and compare to PCA:
+
+```{r map-to-pca-nmd-lipid}
+tmap <- colMeans(gibbs$pst_trace)
+pc1 <- prcomp(y)$x[,1]
+pc2 <- prcomp(y)$x[,2]
+
+data_frame(tmap, pc1, msi = factor(x[,1])) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
+
+data_frame(tmap, pc1, msi = factor(x[,2])) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
+```
+
+
+We also want to find genes that show an interaction:
+
+```{r find-interaction-genes-lipid}
+int_df <- data_frame(
+  tau_pg_1_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,1,]),
+  beta_1_mean = colMeans(gibbs$beta_trace[,1,]),
+  tau_pg_2_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,2,]),
+  beta_2_mean = colMeans(gibbs$beta_trace[,2,]),
+  c_mean = colMeans(gibbs$c_trace),
+  alpha_mean = colMeans(gibbs$alpha_trace[,1,]),
+  eta_map = colMeans(gibbs$eta_trace)
+)
+
+abs_beta_cutoff <- 0.15
+tau_cutoff <- 59
 
 ggplot(int_df, aes(x = abs(beta_mean), y = 1 / tau_pg_map, fill = abs(c_mean))) +
   geom_point(shape = 21, size = 3, alpha = 0.9) + viridis::scale_fill_viridis(name = "MAP |c|") +
   xlab("Coefficient magnitude") + ylab("Posterior variance") +
   geom_hline(yintercept = 1 / tau_cutoff, linetype = 2, color = "grey") +
   geom_vline(xintercept = abs_beta_cutoff, linetype = 2, color = "grey")
+
+ggplot(int_df, aes(x = c_mean, y = beta_1_mean, fill = tau_pg_1_mean)) +
+  geom_point(shape = 21, size = 3, alpha = 0.9) + viridis::scale_fill_viridis(name = "MAP tau_pg") 
+
+ggplot(int_df, aes(x = c_mean, y = beta_2_mean, fill = tau_pg_2_mean)) +
+  geom_point(shape = 21, size = 3, alpha = 0.9) + viridis::scale_fill_viridis(name = "MAP tau_pg") 
+
 ```
 
 We can plot gene expression along phenotime coloured by MSI status:
@@ -385,3 +554,42 @@ as_data_frame(y[, features_to_keep]) %>%
   geom_point(alpha = 0.6) + facet_wrap(~ gene, scales = "free_y") + 
   scale_color_brewer(name = "MSI-high", palette = "Set1")
 ```
+
+And plot gene expression for common genes:
+
+```{r common-genes}
+features_to_keep <- abs(int_df$c_mean) > 1 & abs(int_df$beta_mean) < 0.01
+
+as_data_frame(y[, features_to_keep]) %>% 
+  mutate(phenotime = tmap, msi = factor(x[,1])) %>% 
+  gather(gene, expression, -phenotime, -msi) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = msi)) +
+  geom_point(alpha = 0.6) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1")
+```
+
+See if any concordance with stages:
+
+```{r conc-with-stages}
+data_frame(stage = factor(priors), phenotime = tmap) %>% 
+  ggplot(aes(x = stage, y = phenotime)) + geom_violin() +
+  geom_jitter(alpha = 0.5)
+```
+
+```{r days-to-death}
+sc_tumour$phenotime <- tmap
+
+pd_nonzero <- pData(sc_tumour) %>% 
+  dplyr::select(phenotime, patient.days_to_death, msi_status) %>% 
+  dplyr::filter(!is.na(patient.days_to_death), patient.days_to_death > 0)
+
+ggplot(pd_nonzero, aes(x = phenotime, y = log10(patient.days_to_death),
+                       color = msi_status)) +
+  geom_point()
+
+
+fit <- lm(log10(patient.days_to_death) ~ phenotime, data = pd_nonzero)
+```
+
+
+

@@ -5,7 +5,7 @@ using namespace Rcpp;
 using namespace std;
 
 // [[Rcpp::export]]
-NumericVector sample_c(NumericMatrix y, NumericMatrix x,
+NumericVector sample_c(NumericMatrix y, NumericMatrix x, NumericVector eta,
                        NumericMatrix alpha, NumericMatrix beta,
                        NumericVector pst, 
                        NumericVector tau, double tau_c) {
@@ -37,7 +37,7 @@ NumericVector sample_c(NumericMatrix y, NumericMatrix x,
   for(int g = 0; g < G; g++) { 
     tau_new[g] = tau_c + pst_square_sum * tau[g];
     for(int i = 0; i < N; i++) {
-      mu_new[g] += tau[g] * pst[i] * (y(i,g) - mu(i,g));
+      mu_new[g] += tau[g] * pst[i] * (y(i,g) - eta[g] - mu(i,g));
     }
     mu_new[g] /= tau_new[g];
   }
@@ -51,11 +51,51 @@ NumericVector sample_c(NumericMatrix y, NumericMatrix x,
 }
 
 // [[Rcpp::export]]
+NumericVector sample_eta(NumericMatrix y, NumericMatrix x, 
+                         NumericVector pst, NumericVector c,
+                         NumericMatrix alpha, NumericMatrix beta,
+                         NumericVector tau) {
+  
+  int G = y.ncol();
+  int N = y.nrow();
+  int P = x.ncol();
+  
+  NumericMatrix mu(N, G);
+  
+  // Calculate mu
+  for(int i = 0; i < N; i++) {
+    for(int g = 0; g < G; g++) {
+      double mu_ig = c[g] * pst[i];
+      for(int p = 0; p < P; p++) {
+        mu_ig += x(i,p) * alpha(p,g)  + pst[i] * (beta(p,g) * x(i,p));
+      }
+      mu(i,g) = mu_ig;
+    }
+  }
+  
+  NumericVector eta(G);
+  
+  for(int g = 0; g < G; g++) {
+    double mu_new = 0.0;
+    double tau_new = tau[g] * N;
+    
+    for(int i = 0; i < N; i++)
+      mu_new += y(i,g) - mu(i,g);
+    
+    mu_new /= N;
+    
+    eta[g] =  as<double>(rnorm(1, mu_new, 1 / sqrt(tau_new)));
+  }
+  return eta;
+}
+
+// [[Rcpp::export]]
 NumericVector sample_pst(NumericMatrix y, NumericMatrix x,
-                       NumericMatrix alpha, NumericMatrix beta,
-                       NumericVector q, double tau_q,
-                       NumericVector c, 
-                       NumericVector tau) {
+                         NumericVector eta,
+                         NumericMatrix alpha, NumericMatrix beta,
+                         NumericVector q, double tau_q,
+                         NumericVector c, 
+                         NumericVector tau) {
   
   int G = y.ncol();
   int N = y.nrow();
@@ -79,9 +119,9 @@ NumericVector sample_pst(NumericMatrix y, NumericMatrix x,
         mu(i,g) += alpha(p,g) * x(i,p);
       }
       tau_new[i] += tau[g] * k(i,g) * k(i,g);
-      mu_new[i] += tau[g] * k(i,g) * (y(i,g) - mu(i,g));
+      mu_new[i] += tau[g] * k(i,g) * (y(i,g) - eta[g] - mu(i,g));
     }
-    mu_new[i] += tau_q * q[i];
+    mu_new[i] += (tau_q * q[i]);
     mu_new[i] /= tau_new[i];
   }
   
@@ -94,11 +134,13 @@ NumericVector sample_pst(NumericMatrix y, NumericMatrix x,
   
 }
 
+
 // [[Rcpp::export]]
-NumericMatrix sample_alpha(NumericMatrix y, NumericMatrix x, NumericVector pst,
-                         double tau_alpha, NumericMatrix alpha, NumericMatrix beta,
-                         NumericVector c, 
-                         NumericVector tau) {
+NumericMatrix sample_alpha(NumericMatrix y, NumericMatrix x, NumericVector eta,
+                           NumericVector pst,
+                           double tau_alpha, NumericMatrix alpha, NumericMatrix beta,
+                           NumericVector c, 
+                           NumericVector tau) {
   
   int G = y.ncol();
   int N = y.nrow();
@@ -121,7 +163,7 @@ NumericMatrix sample_alpha(NumericMatrix y, NumericMatrix x, NumericVector pst,
           mu_tilde += pst[i] * beta(p,g) * x(i,p);
           if(pp != p) mu_tilde += alpha(p,g) * x(i,p);
         }
-        mu_new_pg += tau[g] * x(i,p) * (y(i,g) - mu_tilde);
+        mu_new_pg += tau[g] * x(i,p) * (y(i,g) - eta[g] - mu_tilde);
       }
       mu_new_pg /= tau_new_pg;
       alpha(p,g) = as<double>(rnorm(1, mu_new_pg, 1 / sqrt(tau_new_pg)));
@@ -131,11 +173,12 @@ NumericMatrix sample_alpha(NumericMatrix y, NumericMatrix x, NumericVector pst,
 }
   
   
-  // [[Rcpp::export]]
-  NumericMatrix sample_beta(NumericMatrix y, NumericMatrix x, NumericVector pst,
-                             double tau_alpha, NumericMatrix alpha, NumericMatrix beta,
-                             NumericVector c, 
-                             NumericVector tau, NumericMatrix tau_pg) {
+// [[Rcpp::export]]
+NumericMatrix sample_beta(NumericMatrix y, NumericMatrix x, NumericVector eta,
+                          NumericVector pst,
+                          double tau_alpha, NumericMatrix alpha, NumericMatrix beta,
+                          NumericVector c, 
+                          NumericVector tau, NumericMatrix tau_pg) {
   
   int G = y.ncol();
   int N = y.nrow();
@@ -159,7 +202,7 @@ NumericMatrix sample_alpha(NumericMatrix y, NumericMatrix x, NumericVector pst,
           if(pp != p) mu_tilde += pst[i] * beta(p,g) * x(i,p);
           mu_tilde += alpha(p,g) * x(i,p);
         }
-        mu_new_pg += tau[g] * pst[i] * x(i,p) * (y(i,g) - mu_tilde);
+        mu_new_pg += tau[g] * pst[i] * x(i,p) * (y(i,g) - eta[g] - mu_tilde);
       }
       mu_new_pg /= tau_new_pg;
       beta(p,g) = as<double>(rnorm(1, mu_new_pg, 1 / sqrt(tau_new_pg)));
@@ -170,9 +213,10 @@ NumericMatrix sample_alpha(NumericMatrix y, NumericMatrix x, NumericVector pst,
 
 
 // [[Rcpp::export]]
-NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector pst,
-                          NumericMatrix alpha, NumericMatrix beta, NumericMatrix tau_pg,
-                          NumericVector c, double a, double b) {
+NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector eta,
+                         NumericVector pst,
+                        NumericMatrix alpha, NumericMatrix beta, NumericMatrix tau_pg,
+                        NumericVector c, double a, double b) {
   
   int G = y.ncol();
   int N = y.nrow();
@@ -193,7 +237,7 @@ NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector pst,
   for(int g = 0; g < G; g++) {
     double b_new = b;
     for(int i = 0; i < N; i++) 
-      b_new += 0.5 * (y(i,g) - mu(i,g)) * (y(i,g) - mu(i,g));
+      b_new += 0.5 * (y(i,g) -eta[g] - mu(i,g)) * (y(i,g) - eta[g] - mu(i,g));
     for(int p = 0; p < P; p++)
       b_new += 0.5 * tau_pg(p,g) * beta(p,g) * beta(p,g);
     
