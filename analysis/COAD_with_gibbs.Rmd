@@ -486,7 +486,7 @@ y <- scale(t(exprs(sc_tumour[to_use,])))
 ```
 
 ```{r gibbs-sample-lipid}
-gibbs <- phenot(y, x[,2], iter = 1000, thin = 1)
+gibbs <- phenot(y, x[,1,drop = F], q = priors, tau_q = 30, iter = 1500, thin = 2)
 ```
 
 Diagnostic plot:
@@ -518,8 +518,8 @@ We also want to find genes that show an interaction:
 int_df <- data_frame(
   tau_pg_1_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,1,]),
   beta_1_mean = colMeans(gibbs$beta_trace[,1,]),
-  tau_pg_2_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,2,]),
-  beta_2_mean = colMeans(gibbs$beta_trace[,2,]),
+  # tau_pg_2_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,2,]),
+  # beta_2_mean = colMeans(gibbs$beta_trace[,2,]),
   c_mean = colMeans(gibbs$c_trace),
   alpha_mean = colMeans(gibbs$alpha_trace[,1,]),
   eta_map = colMeans(gibbs$eta_trace)
