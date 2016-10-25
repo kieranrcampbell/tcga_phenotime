@@ -486,7 +486,8 @@ y <- scale(t(exprs(sc_tumour[to_use,])))
 ```
 
 ```{r gibbs-sample-lipid}
-gibbs <- phenot(y, x[,1,drop = F], q = priors, tau_q = 30, iter = 1500, thin = 2)
+set.seed(123)
+gibbs <- phenot(y, x[,,drop = F], iter = 8000, thin = 4)
 ```
 
 Diagnostic plot:
@@ -516,10 +517,11 @@ We also want to find genes that show an interaction:
 
 ```{r find-interaction-genes-lipid}
 int_df <- data_frame(
+  gene = colnames(y),
   tau_pg_1_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,1,]),
   beta_1_mean = colMeans(gibbs$beta_trace[,1,]),
-  # tau_pg_2_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,2,]),
-  # beta_2_mean = colMeans(gibbs$beta_trace[,2,]),
+  tau_pg_2_mean = matrixStats::colMedians(gibbs$tau_pg_trace[,2,]),
+  beta_2_mean = colMeans(gibbs$beta_trace[,2,]),
   c_mean = colMeans(gibbs$c_trace),
   alpha_mean = colMeans(gibbs$alpha_trace[,1,]),
   eta_map = colMeans(gibbs$eta_trace)
@@ -528,7 +530,13 @@ int_df <- data_frame(
 abs_beta_cutoff <- 0.15
 tau_cutoff <- 59
 
-ggplot(int_df, aes(x = abs(beta_mean), y = 1 / tau_pg_map, fill = abs(c_mean))) +
+ggplot(int_df, aes(x = abs(beta_1_mean), y = 1 / tau_pg_1_mean, fill = abs(c_mean))) +
+  geom_point(shape = 21, size = 3, alpha = 0.9) + viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab("Coefficient magnitude") + ylab("Posterior variance") +
+  geom_hline(yintercept = 1 / tau_cutoff, linetype = 2, color = "grey") +
+  geom_vline(xintercept = abs_beta_cutoff, linetype = 2, color = "grey")
+
+ggplot(int_df, aes(x = abs(beta_2_mean), y = 1 / tau_pg_2_mean, fill = abs(c_mean))) +
   geom_point(shape = 21, size = 3, alpha = 0.9) + viridis::scale_fill_viridis(name = "MAP |c|") +
   xlab("Coefficient magnitude") + ylab("Posterior variance") +
   geom_hline(yintercept = 1 / tau_cutoff, linetype = 2, color = "grey") +
@@ -540,12 +548,14 @@ ggplot(int_df, aes(x = c_mean, y = beta_1_mean, fill = tau_pg_1_mean)) +
 ggplot(int_df, aes(x = c_mean, y = beta_2_mean, fill = tau_pg_2_mean)) +
   geom_point(shape = 21, size = 3, alpha = 0.9) + viridis::scale_fill_viridis(name = "MAP tau_pg") 
 
+ggplot(int_df, aes(x = beta_1_mean, y = beta_2_mean)) +
+  geom_point(shape = 21, size = 3, alpha = 0.9)
 ```
 
 We can plot gene expression along phenotime coloured by MSI status:
 
 ```{r expression_along_phenotime-lipid, fig.width = 10}
-features_to_keep <- int_df$tau_pg_map < tau_cutoff & abs(int_df$beta_mean) > abs_beta_cutoff
+features_to_keep <- int_df$tau_pg_2_mean < tau_cutoff & abs(int_df$beta_2_mean) > abs_beta_cutoff
 
 as_data_frame(y[, features_to_keep]) %>% 
   mutate(phenotime = tmap, msi = factor(x[,1])) %>% 

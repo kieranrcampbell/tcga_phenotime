@@ -160,8 +160,8 @@ NumericMatrix sample_alpha(NumericMatrix y, NumericMatrix x, NumericVector eta,
         double mu_tilde = pst[i] * c[g];
         // calculate mu_tilde
         for(int pp = 0; pp < P; pp++) {
-          mu_tilde += pst[i] * beta(p,g) * x(i,p);
-          if(pp != p) mu_tilde += alpha(p,g) * x(i,p);
+          mu_tilde += pst[i] * beta(pp,g) * x(i,pp);
+          if(pp != p) mu_tilde += alpha(pp,g) * x(i,pp);
         }
         mu_new_pg += tau[g] * x(i,p) * (y(i,g) - eta[g] - mu_tilde);
       }
@@ -184,13 +184,11 @@ NumericMatrix sample_beta(NumericMatrix y, NumericMatrix x, NumericVector eta,
   int N = y.nrow();
   int P = x.ncol();
   
-  // NumericMatrix mu_new(P, G);
-  // NumericMatrix tau_new(P, G);
-  
+
   for(int p = 0; p < P; p++) {
     for(int g = 0; g < G; g++) {
       
-      double tau_new_pg = tau[g] * tau_pg(p,g);
+      double tau_new_pg = tau_pg(p,g);
       double mu_new_pg = 0.0;
       
       for(int i = 0; i < N; i++) {
@@ -199,9 +197,10 @@ NumericMatrix sample_beta(NumericMatrix y, NumericMatrix x, NumericVector eta,
         double mu_tilde = pst[i] * c[g];
         // calculate mu_tilde
         for(int pp = 0; pp < P; pp++) {
-          if(pp != p) mu_tilde += pst[i] * beta(p,g) * x(i,p);
-          mu_tilde += alpha(p,g) * x(i,p);
+            if(pp != p) mu_tilde += pst[i] * beta(pp,g) * x(i,pp);
+            mu_tilde += alpha(pp,g) * x(i,pp);
         }
+        
         mu_new_pg += tau[g] * pst[i] * x(i,p) * (y(i,g) - eta[g] - mu_tilde);
       }
       mu_new_pg /= tau_new_pg;
@@ -215,7 +214,7 @@ NumericMatrix sample_beta(NumericMatrix y, NumericMatrix x, NumericVector eta,
 // [[Rcpp::export]]
 NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector eta,
                          NumericVector pst,
-                        NumericMatrix alpha, NumericMatrix beta, NumericMatrix tau_pg,
+                        NumericMatrix alpha, NumericMatrix beta,
                         NumericVector c, double a, double b) {
   
   int G = y.ncol();
@@ -237,17 +236,15 @@ NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector eta,
   for(int g = 0; g < G; g++) {
     double b_new = b;
     for(int i = 0; i < N; i++) 
-      b_new += 0.5 * (y(i,g) -eta[g] - mu(i,g)) * (y(i,g) - eta[g] - mu(i,g));
-    for(int p = 0; p < P; p++)
-      b_new += 0.5 * tau_pg(p,g) * beta(p,g) * beta(p,g);
+      b_new += 0.5 * (y(i,g) - eta[g] - mu(i,g)) * (y(i,g) - eta[g] - mu(i,g));
     
-    tau(g) = as<double>(rgamma(1, a + N / 2 + P / 2, 1 / b_new)); // !!! RCPP gamma parametrised by shape - scale
+    tau(g) = as<double>(rgamma(1, a + N / 2, 1 / b_new)); // !!! RCPP gamma parametrised by shape - scale
   }
   return tau;
 }
 
 // [[Rcpp::export]]
-NumericMatrix sample_tau_pg(NumericMatrix beta, NumericVector tau, 
+NumericMatrix sample_tau_pg(NumericMatrix beta,
                             double a_beta, double b_beta) {
   int P = beta.nrow();
   int G = beta.ncol();
@@ -256,7 +253,7 @@ NumericMatrix sample_tau_pg(NumericMatrix beta, NumericVector tau,
   
   for(int p = 0; p < P; p++) {
     for(int g = 0; g < G; g++) {
-      double beta_new = b_beta + tau[g] * beta(p,g) * beta(p,g) / 2;
+      double beta_new = b_beta + beta(p,g) * beta(p,g) / 2;
       tau_pg(p,g) = as<double>(rgamma(1, a_beta + 1, 1 / beta_new));
     }
   }
