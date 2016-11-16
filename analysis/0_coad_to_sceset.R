@@ -18,12 +18,24 @@ names(coad)[1] <- "feature_id"
 rownames(coad) <- coad$feature_id; coad$feature_id <- NULL
 names(coad) <- sample_names
 
+coad_counts <- read_tsv("../data/TCGA_COAD_counts.tsv.gz")
+sample_names <- names(coad_counts)[-1]
+coad_counts <- data.frame(coad_counts)
+names(coad_counts)[1] <- "feature_id"
+rownames(coad_counts) <- coad_counts$feature_id; coad_counts$feature_id <- NULL
+names(coad_counts) <- sample_names
+
+stopifnot(all.equal(dim(coad), dim(coad_counts)))
+stopifnot(all.equal(rownames(coad), rownames(coad_counts)))
+stopifnot(all.equal(colnames(coad), colnames(coad_counts)))
+
 ## Find feature names (ensembl transcript id + hgnc symbol) and gene types
 id_split <- strsplit(rownames(coad), "|", fixed = TRUE)
 feature_names <- sapply(id_split, function(x) paste0(x[1], "_", x[6]))
 gene_type <- sapply(id_split, `[`, 8)
 ensembl_gene_id <- sapply(id_split, `[`, 2)
 rownames(coad) <- feature_names
+rownames(coad_counts) <- feature_names
 
 ## Match CGHubAnalysisID with comparible ID in OV.clinical
 
@@ -79,12 +91,13 @@ common_cghub_ids <- intersect(colnames(coad), coad_clinical$CGHubAnalysisID)
 ## Put clinical data in order corresponding to expression data
 coad_clinical <- coad_clinical[match(common_cghub_ids, coad_clinical$CGHubAnalysisID), ]
 coad <- coad[, match(common_cghub_ids, names(coad))]
+coad_counts <- coad_counts[,match(common_cghub_ids, names(coad_counts)) ]
 stopifnot(all.equal(colnames(coad), coad_clinical$CGHubAnalysisID))
 
 coad_clinical_pd <- data.frame(coad_clinical)
 rownames(coad_clinical_pd) <- coad_clinical_pd$CGHubAnalysisID
 
-sce <- newSCESet(tpmData = as.matrix(coad), 
+sce <- newSCESet(tpmData = as.matrix(coad), countData = coad_counts,
                  phenoData = AnnotatedDataFrame(coad_clinical_pd))
 
 

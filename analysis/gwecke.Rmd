@@ -1,0 +1,52 @@
+---
+title: "Gwecke test for consistency of Gibbs sampler"
+author: "Kieran Campbell"
+date: "16 November 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(tidyverse)
+library(Rcpp)
+
+source("../gibbs/phenotime.R")
+sourceCpp("../gibbs/phenotime.cpp")
+
+set.seed(123L)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+Make some synthetic x and an initial y:
+
+```{r synthetic}
+N <- 50
+G <- 10
+P <- 2
+
+x <- matrix(sample(0:1, size = N * P, replace = TRUE), ncol = P)
+
+```
+
+Specify initial parameter values:
+
+```{r init-vals}
+## precision parameters
+tau <- rep(1, G)
+
+## pseudotime parameters
+pst <-  rnorm(N)
+
+## parameter initialisation
+alpha <- matrix(0, nrow = P, ncol = G)
+beta <- matrix(0, nrow = P, ncol = G)
+c <- rep(0, G)
+eta <- rep(0, G)
+
+tau_pg <- matrix(rgamma(P * G, a_beta, b_beta), nrow = P, ncol  = G)
+```
+
+
+

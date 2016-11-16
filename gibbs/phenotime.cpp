@@ -54,7 +54,7 @@ NumericVector sample_c(NumericMatrix y, NumericMatrix x, NumericVector eta,
 NumericVector sample_eta(NumericMatrix y, NumericMatrix x, 
                          NumericVector pst, NumericVector c,
                          NumericMatrix alpha, NumericMatrix beta,
-                         NumericVector tau) {
+                         NumericVector tau, double tau_eta) {
   
   int G = y.ncol();
   int N = y.nrow();
@@ -77,12 +77,13 @@ NumericVector sample_eta(NumericMatrix y, NumericMatrix x,
   
   for(int g = 0; g < G; g++) {
     double mu_new = 0.0;
-    double tau_new = tau[g] * N;
+    double tau_new = tau[g] * N + tau_eta;
     
     for(int i = 0; i < N; i++)
       mu_new += y(i,g) - mu(i,g);
     
-    mu_new /= N;
+    mu_new *= tau[g];
+    mu_new /= (tau[g] * N + tau_eta);
     
     eta[g] =  as<double>(rnorm(1, mu_new, 1 / sqrt(tau_new)));
   }

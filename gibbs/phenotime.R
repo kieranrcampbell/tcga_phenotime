@@ -68,7 +68,7 @@ to_ggmcmc <- function(g) {
 phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2, 
                   q = rep(0, nrow(y)), tau_q = 1, 
                   pc_initialise = 1, tau_alpha = 1, tau_c = 1, a = 2, b = 1,
-                  a_beta = 6, b_beta = 0.1) {
+                  a_beta = 6, b_beta = 0.1, tau_eta = 0.1) {
   
   # set.seed(seed)
   N <- nrow(y)

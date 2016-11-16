@@ -1,0 +1,306 @@
+---
+title: "Exploratory analysis of TCGA COAD data"
+author: "Kieran Campbell"
+date: "9 October 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(scater)
+library(tidyverse)
+library(magrittr)
+library(matrixStats)
+library(ggrepel)
+library(rstan)
+library(MCMCglmm)
+library(coda)
+library(cowplot)
+library(biomaRt)
+library(Rcpp)
+library(goseq)
+library(viridis)
+library(splines)
+library(MASS)
+library(stringr)
+
+source("../gibbs/phenotime.R")
+sourceCpp("../gibbs/phenotime.cpp")
+
+set.seed(123L)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+# Data perparation
+
+```{r data-prep, include = TRUE, message = FALSE}
+load("../data/sce_coad_kallisto.Rdata")
+sce <- sce[matrixStats::rowVars(tpm(sce)) > 0, ]
+
+is_exprs(sce) <- tpm(sce) > 0
+
+
+sce <- calculateQCMetrics(sce)
+
+
+hgnc_symbols <- sapply(strsplit(featureNames(sce), "_"), `[`, 2)
+
+dvar <- data_frame(var_exprs = matrixStats::rowVars(exprs(sce)),
+                   hgnc_symbols, gene = featureNames(sce))
+fData(sce) <- cbind(fData(sce), dvar)
+
+set.seed(123L)
+sce <- plotPCA(sce, ncomponents = 3,
+               colour_by = "short_plate",
+               return_SCESet = TRUE)
+
+
+sc <- sce[, redDim(sce)[,1] < 0 & redDim(sce)[,3] > -10]
+
+## After subsetting, re-calculate QC metrics
+sc <- calculateQCMetrics(sc)
+rm(sce) # can't store large sceset (??)
+```
+
+And let's plot this and colour by tumour / normal:
+
+```{r sc-pca}
+plotPCA(sc, colour_by = "sample_type", ncomponents = 3)
+```
+
+And create an SCESet using just the tumour samples:
+
+```{r create tumour-only dataset}
+sc_tumour <- sc[, sc$sample_type != "normal"]
+```
+
+
+# Selecting genes
+
+We can select the high variance genes:
+
+```{r select-highvar}
+var_cutoff <- 7
+
+filter(fData(sc_tumour), mean_exprs > 0.1, var_exprs > 0.1) %>% 
+  ggplot(aes(x = mean_exprs, y = var_exprs, fill = n_cells_exprs)) +
+  geom_point(shape = 21, alpha = 0.8) + 
+  geom_hline(yintercept = var_cutoff, linetype = 2) +
+  scale_fill_viridis(name = "Number\nSamples\nExpressed", option = "inferno") +
+  theme(axis.title = element_text(size = 11)) + 
+  ylab("Variance log expression") + xlab("Mean log expression")
+
+```
+
+What do these transcripts correspond to?
+
+```{r transcripts-go-analysis}
+# get ensembl gene ids
+fData(sc_tumour)$ensembl_transcript_id <- 
+  sapply(strsplit(featureNames(sc_tumour), ".", fixed = TRUE), `[`, 1)
+
+fdata_for_go <- filter(fData(sc_tumour), var_exprs > 0.1, mean_exprs > 0.1)
+highvar_transcripts <- fdata_for_go$ensembl_transcript_id[fdata_for_go$var_exprs > var_cutoff]
+
+
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+ensembl_res <- getBM(c("ensembl_transcript_id", "ensembl_gene_id", "gene_biotype"), 
+            filters = "ensembl_transcript_id",
+            values = fdata_for_go$ensembl_transcript_id, mart = ensembl)
+
+ensembl_res$is_highvar <- 1 * (ensembl_res$ensembl_transcript_id %in% highvar_transcripts)
+
+gene_highvar <- group_by(ensembl_res, ensembl_gene_id) %>% 
+  summarise(prop_highvar = mean(is_highvar)) %>% 
+  mutate(is_gene_highvar = prop_highvar > 0)
+
+gene_highvar <- inner_join(gene_highvar,
+                           distinct(dplyr::select(ensembl_res, ensembl_gene_id, gene_biotype), ensembl_gene_id, gene_biotype),
+                           by = "ensembl_gene_id")
+
+filter(gene_highvar, is_gene_highvar) %>% 
+  ggplot(aes(x = gene_biotype)) + geom_bar() +
+  theme(axis.text.x = element_text(angle = 90))
+
+go_input <- 1 * (gene_highvar$is_gene_highvar)
+names(go_input) <- gene_highvar$ensembl_gene_id
+
+pwf <- nullp(go_input, "hg38", "ensGene")
+go <- goseq(pwf, "hg38", "ensGene")#, test.cats = "GO:BP")
+
+go_tidy <- dplyr::select(go, over_represented_pvalue, term) %>% 
+  mutate(qvalue = p.adjust(over_represented_pvalue, method = "BH"),
+         log10_qvalue = -log10(qvalue)) %>% 
+  head(n = 10) %>% 
+  arrange((log10_qvalue)) %>% tbl_df()
+
+go_tidy %>% 
+  mutate(term = factor(as.character(term), levels = go_tidy$term)) %>% 
+  ggplot(aes(x = term, y = log10_qvalue)) +
+  geom_bar(stat = "identity") + coord_flip() +
+  theme(axis.text.y = element_text(size = 7), axis.title.y = element_blank()) +
+  xlab("-log10(q-val)") 
+```
+
+
+Now construct the covariates:
+
+```{r construct-priors}
+x_metastasis <- 1 * (sc_tumour$m_stage != "m0")
+x_metastasis[is.na(x_metastasis)] <- mean(x_metastasis, na.rm = TRUE)
+x_metastasis <- scale_vec(x_metastasis)
+
+x_msi <- scale_vec( 1 * (sc_tumour$msi_status == "msi-h") )
+
+x <- cbind(x_msi, x_metastasis)
+```
+
+We can see if they're correlated:
+
+```{r are-covs-cor}
+print( cor(x) )
+```
+
+See if there's anything on a pca plot:
+
+```{r pca-plot}
+sc_tumour$x_msi <- x_msi
+sc_tumour$x_metastasis <- x_metastasis
+
+# Plot PCA using only high-var transcripts
+highvar_fnames <- featureNames(sc_tumour)[fData(sc_tumour)$var_exprs > var_cutoff]
+
+plotPCA(sc_tumour, colour_by = "x_msi", ncomponents = 3, feature_set = highvar_fnames)
+plotPCA(sc_tumour, colour_by = "x_metastasis", 
+        ncomponents = 3, feature_set = highvar_fnames)
+```
+
+We see there are a couple of outliers on PC2 that we'll remove before continuing:
+
+```{r remove-outliers-2}
+set.seed(13)
+sc_tumour <- plotPCA(sc_tumour, return_SCESet = TRUE, feature_set = highvar_fnames)
+sc_tumour <- sc_tumour[, redDim(sc_tumour)[,2] < 12]
+```
+
+and plot the PCA again to see any difference:
+
+```{r plot-pca}
+plotPCA(sc_tumour, colour_by = "x_msi", ncomponents = 3, feature_set = highvar_fnames)
+plotPCA(sc_tumour, colour_by = "x_metastasis", 
+        ncomponents = 3, feature_set = highvar_fnames)
+```
+
+And now we're good to fit phenotime:
+
+```{r fit-phenotime}
+x <- as.matrix(dplyr::select(pData(sc_tumour), x_msi, x_metastasis))
+y <- scale(t(exprs(sc_tumour[highvar_fnames,])))
+```
+
+```{r gibbs-sample-lipid}
+set.seed(123)
+gibbs <- phenot(y, x, iter = 4000, thin = 2)
+```
+
+Diagnostic plot:
+
+```{r diagnostic-lipid}
+qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
+```
+
+Then extract MAP ordering and compare to PCA:
+
+```{r map-to-pca-nmd-lipid}
+tmap <- colMeans(gibbs$pst_trace)
+pc1 <- prcomp(y)$x[,1]
+pc2 <- prcomp(y)$x[,2]
+
+data_frame(tmap, pc1, msi = factor(x[,1])) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
+
+data_frame(tmap, pc1, msi = factor(x[,2])) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
+```
+
+
+We also want to find genes that show an interaction:
+
+```{r find-interaction-genes-lipid}
+int_df <- data_frame(
+  gene = colnames(y),
+  hgnc_symbol = sapply(str_split(colnames(y), "_"), `[`, 2),
+  tau_pg_1_mean = colMeans(gibbs$tau_pg_trace[,1,]),
+  beta_1_mean = colMeans(gibbs$beta_trace[,1,]),
+  tau_pg_2_mean = colMeans(gibbs$tau_pg_trace[,2,]),
+  beta_2_mean = colMeans(gibbs$beta_trace[,2,]),
+  c_mean = colMeans(gibbs$c_trace),
+  alpha_mean = colMeans(gibbs$alpha_trace[,1,]),
+  eta_map = colMeans(gibbs$eta_trace)
+)
+
+abs_beta_cutoff <- 0.15
+tau_cutoff <- 59
+
+msi_ard_plot <- ggplot(int_df, aes(x = beta_1_mean, y = 1 / tau_pg_1_mean)) +
+  geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab("Coefficient magnitude") + ylab("Posterior variance") +
+  geom_label_repel(data = filter(int_df, tau_pg_1_mean < tau_cutoff),
+                  aes(label = hgnc_symbol))
+
+meta_ard_plot <- ggplot(int_df, aes(x = beta_2_mean, y = 1 / tau_pg_2_mean)) +
+  geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab("Coefficient magnitude") + ylab("Posterior variance") +
+  geom_label_repel(data = filter(int_df, tau_pg_2_mean < tau_cutoff),
+                  aes(label = hgnc_symbol))
+
+plot_grid(msi_ard_plot, meta_ard_plot, 
+          labels = c("Microsatellite instability", "Metastasis"))
+```
+
+We can plot gene expression for MSI:
+
+```{r expression_along_phenotime-msi, fig.width = 10}
+features_to_keep <- int_df$tau_pg_1_mean < tau_cutoff
+
+as_data_frame(y[, features_to_keep]) %>% 
+  mutate(phenotime = tmap, msi = factor(x[,1])) %>% 
+  gather(gene, expression, -phenotime, -msi) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = msi)) +
+  geom_point(alpha = 0.3) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1") +
+  stat_smooth(se = FALSE, method = "lm", formula = y ~ ns(x,3), size = 2)
+```
+
+
+```{r expression_along_phenotime-meta, fig.width = 12, fig.height = 8}
+features_to_keep <- int_df$tau_pg_2_mean < tau_cutoff
+
+samples_to_keep <- x[,2] != 0
+
+as_data_frame(y[samples_to_keep, features_to_keep]) %>% 
+  mutate(phenotime = tmap[samples_to_keep], meta = factor(x[samples_to_keep, 2])) %>% 
+  gather(gene, expression, -phenotime, -meta) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = meta)) +
+  geom_point(alpha = 0.3) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1") +
+  stat_smooth(se = FALSE, method = "lm", formula = y ~ ns(x,3), size = 2)
+```
+
+
+
+```{r foxp3}
+sc_tumour$phenotime <- tmap
+foxp3_inds <- grep("FOXP3", featureNames(sc_tumour))[2:3]
+
+plotExpression(sc_tumour, x = "phenotime", features = foxp3_inds,
+               show_violin = FALSE, scales = "free_y") +
+  stat_smooth(se = FALSE, color = "black", method = "lm", formula = y ~ ns(x,3))
+
+```
+
+

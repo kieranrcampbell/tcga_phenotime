@@ -1,0 +1,324 @@
+---
+title: "Exploratory analysis of TCGA COAD data"
+author: "Kieran Campbell"
+date: "9 October 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(scater)
+library(tidyverse)
+library(magrittr)
+library(matrixStats)
+library(ggrepel)
+library(rstan)
+library(MCMCglmm)
+library(coda)
+library(cowplot)
+library(biomaRt)
+library(Rcpp)
+library(goseq)
+library(viridis)
+library(splines)
+library(MASS)
+library(stringr)
+
+source("../gibbs/phenotime.R")
+sourceCpp("../gibbs/phenotime.cpp")
+
+set.seed(123L)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+# Data perparation
+
+```{r data-prep, include = TRUE, message = FALSE}
+load("../data/sce_coad_kallisto.Rdata")
+sce <- sce[matrixStats::rowVars(tpm(sce)) > 0, ]
+
+is_exprs(sce) <- tpm(sce) > 0
+
+
+sce <- calculateQCMetrics(sce)
+
+
+hgnc_symbols <- sapply(strsplit(featureNames(sce), "_"), `[`, 2)
+
+dvar <- data_frame(var_exprs = matrixStats::rowVars(exprs(sce)),
+                   hgnc_symbols, gene = featureNames(sce))
+fData(sce) <- cbind(fData(sce), dvar)
+
+set.seed(123L)
+sce <- plotPCA(sce, ncomponents = 3,
+               colour_by = "short_plate",
+               return_SCESet = TRUE)
+
+
+sc <- sce[, redDim(sce)[,1] < 0 & redDim(sce)[,3] > -10]
+
+## After subsetting, re-calculate QC metrics
+sc <- calculateQCMetrics(sc)
+rm(sce) # can't store large sceset (??)
+```
+
+And let's plot this and colour by tumour / normal:
+
+```{r sc-pca}
+plotPCA(sc, colour_by = "sample_type", ncomponents = 3)
+```
+
+And create an SCESet using just the tumour samples:
+
+```{r create tumour-only dataset}
+sc_tumour <- sc[, sc$sample_type != "normal"]
+```
+
+
+
+
+What do these transcripts correspond to?
+
+```{r transcripts-go-analysis}
+go_lipid <- "GO:0006629" # lipid metabolic process
+
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+la <- getBM(c("ensembl_transcript_id", "ensembl_gene_id"), filters = "go_id",
+                   values = go_lipid, mart = ensembl)
+
+fData(sc_tumour)$ensembl_transcript_id <- 
+  sapply(strsplit(featureNames(sc_tumour), ".", fixed = TRUE), `[`, 1)
+fData(sc_tumour)$is_lipid_transcript <- 
+  fData(sc_tumour)$ensembl_transcript_id %in% la$ensembl_transcript_id
+
+fData(sc_tumour)$var_exprs <- matrixStats::rowVars(exprs(sc_tumour))
+
+sc_lipid <- sc_tumour[fData(sc_tumour)$is_lipid_transcript &
+                        fData(sc_tumour)$var_exprs > 0.1, ]
+```
+
+
+Now construct the covariates:
+
+```{r construct-priors}
+x_metastasis <- 1 * (sc_tumour$m_stage != "m0")
+x_metastasis[is.na(x_metastasis)] <- mean(x_metastasis, na.rm = TRUE)
+x_metastasis <- scale_vec(x_metastasis)
+
+x_msi <- scale_vec( 1 * (sc_tumour$msi_status == "msi-h") )
+
+x <- cbind(x_msi, x_metastasis)
+```
+
+We can see if they're correlated:
+
+```{r are-covs-cor}
+print( cor(x) )
+```
+
+See if there's anything on a pca plot:
+
+```{r pca-plot}
+sc_lipid$x_msi <- x_msi
+sc_lipid$x_metastasis <- x_metastasis
+
+plotPCA(sc_lipid, colour_by = "x_msi", ncomponents = 4)
+plotPCA(sc_lipid, colour_by = "x_metastasis", ncomponents = 3)
+```
+
+And now we're good to fit phenotime:
+
+```{r fit-phenotime}
+x <- as.matrix(dplyr::select(pData(sc_lipid), x_msi, x_metastasis))
+y <- scale(t(exprs(sc_lipid)))
+```
+
+```{r gibbs-sample-lipid}
+set.seed(123)
+gibbs <- phenot(y, x, iter = 8000, thin = 2)
+```
+
+Diagnostic plot:
+
+```{r diagnostic-lipid}
+qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
+```
+
+Then extract MAP ordering and compare to PCA:
+
+```{r map-to-pca-nmd-lipid}
+tmap <- colMeans(gibbs$pst_trace)
+pc1 <- prcomp(y)$x[,1]
+pc2 <- prcomp(y)$x[,2]
+
+df_comp <- data_frame(tmap, pc1, msi = factor(x[,1]), meta = factor(x[,2]))
+df_comp$msi <- plyr::mapvalues(df_comp$msi, from = sort(unique(df_comp$msi)),
+                               to = c("Low", "High"))
+df_comp$meta <- plyr::mapvalues(df_comp$meta, from = sort(unique(df_comp$meta)),
+                               to = c("None", "Missing", "Metastasis"))
+
+ggplot(df_comp, aes(x = pc1, y = tmap, color = msi, shape = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1", name = "Microsatellite\nInstability") +
+  scale_shape_discrete(name = "Microsatellite\nInstability") +
+  xlab("Principal component 1") + ylab("t") +
+  theme(legend.position = "top")
+
+pc1_vs_msi <- last_plot()
+
+ggplot(df_comp, aes(x = pc1, y = tmap, color = meta, shape = meta)) + geom_point() +
+  scale_color_brewer(palette = "Set1", name = "Metastasis") +
+  scale_shape_discrete(name = "Metastasis") +
+  xlab("Principal component 1") + ylab("t") +
+  theme(legend.position = "top")
+
+pc1_vs_meta <- last_plot()
+```
+
+
+We also want to find genes that show an interaction:
+
+```{r find-interaction-genes-lipid}
+int_df <- data_frame(
+  gene = colnames(y),
+  hgnc_symbol = sapply(str_split(colnames(y), "_"), `[`, 2),
+  tau_pg_1_mean = colMeans(gibbs$tau_pg_trace[,1,]),
+  beta_1_mean = colMeans(gibbs$beta_trace[,1,]),
+  tau_pg_2_mean = colMeans(gibbs$tau_pg_trace[,2,]),
+  beta_2_mean = colMeans(gibbs$beta_trace[,2,]),
+  c_mean = colMeans(gibbs$c_trace),
+  alpha_mean = colMeans(gibbs$alpha_trace[,1,]),
+  eta_map = colMeans(gibbs$eta_trace)
+)
+
+abs_beta_cutoff <- 0.15
+tau_cutoff <- 1 / 0.016
+
+msi_ard_plot <- ggplot(int_df, aes(x = beta_1_mean, y = 1 / tau_pg_1_mean)) +
+  geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab(expression(paste("MAP ", beta))) +
+    ylab(expression(paste("[MAP ", chi ,"]" ^ "-1"))) +
+  geom_label_repel(data = filter(int_df, tau_pg_1_mean < tau_cutoff),
+                  aes(label = hgnc_symbol))
+
+meta_ard_plot <- ggplot(int_df, aes(x = beta_2_mean, y = 1 / tau_pg_2_mean)) +
+  geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab(expression(paste("MAP ", beta))) +
+    ylab(expression(paste("[MAP ", chi ,"]" ^ "-1"))) +
+  geom_label_repel(data = filter(int_df, tau_pg_2_mean < tau_cutoff),
+                  aes(label = hgnc_symbol))
+
+# plot_grid(msi_ard_plot, meta_ard_plot, 
+#           labels = c("Microsatellite instability", "Metastasis"))
+
+## Plot for paper
+df_ard <- data_frame(
+  tau_pg = c(int_df$tau_pg_1_mean, int_df$tau_pg_2_mean),
+  beta = c(int_df$beta_1_mean, int_df$beta_2_mean),
+  hgnc_symbol = rep(int_df$hgnc_symbol, 2),
+  covariate = factor(rep(c("Microsatellite instability", "Metastasis"), each = nrow(int_df)),
+                         levels = c("Microsatellite instability", "Metastasis"))
+)
+
+ggplot(df_ard, aes(x = beta, y = 1 / tau_pg)) +
+  geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab(expression(paste("MAP ", beta))) +
+    ylab(expression(paste("[MAP ", chi ,"]" ^ "-1"))) +
+  geom_label_repel(data = filter(df_ard, tau_pg < tau_cutoff),
+                  aes(label = hgnc_symbol)) +
+  facet_wrap(~ covariate)
+
+ard_plot <- last_plot()
+```
+
+We can plot gene expression for MSI:
+
+```{r expression_along_phenotime-msi, fig.width = 10}
+features_to_keep <- int_df$tau_pg_1_mean < tau_cutoff
+
+as_data_frame(y[, features_to_keep]) %>% 
+  dplyr::mutate(phenotime = tmap, msi = factor(x[,1])) %>% 
+  gather(gene, expression, -phenotime, -msi) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = msi)) +
+  geom_point(alpha = 0.3) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1") +
+  stat_smooth(se = FALSE, method = "lm", formula = y ~ ns(x,3), size = 2)
+```
+
+
+```{r expression_along_phenotime-meta, fig.width = 12, fig.height = 8}
+features_to_keep <- int_df$tau_pg_2_mean < tau_cutoff
+
+samples_to_keep <- x[,2] != 0
+
+as_data_frame(y[samples_to_keep, features_to_keep]) %>% 
+  dplyr::mutate(phenotime = tmap[samples_to_keep], 
+                meta = factor(x[samples_to_keep, 2])) %>% 
+  gather(gene, expression, -phenotime, -meta) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = meta)) +
+  geom_point(alpha = 0.3) + facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(name = "MSI-high", palette = "Set1") +
+  stat_smooth(se = FALSE, method = "lm", formula = y ~ ns(x,3), size = 2)
+```
+
+Foxp3:
+
+
+```{r tregs, fix.width = 9, fig.height = 3}
+sc_tumour$phenotime <- tmap
+
+# ensembl ids for FOXP3, CD4 and CD25
+treg_ids <- c("ENSG00000049768", "ENSG00000010610", "ENSG00000134460")
+treg_inds <- unlist(sapply(treg_ids, function(tr_id) grep(tr_id, fData(sc_tumour)$ensembl_gene_id)))
+sc_treg <- sc_tumour[treg_inds, ]
+sc_treg <- sc_treg[fData(sc_treg)$gene_type == "protein_coding", ]
+
+sc_treg <- summariseExprsAcrossFeatures(sc_treg, summarise_by = "ensembl_gene_id")
+fData(sc_treg)$ensembl_gene_id <- sapply(strsplit(featureNames(sc_treg), ".", fixed = TRUE), `[`, 1)
+
+
+treg_expr <- as_data_frame(t(exprs(sc_treg)))
+names(treg_expr) <- c("CD4", "FOXP3", "CD25")
+treg_tidy <- treg_expr %>% mutate(phenotime = sc_treg$phenotime) %>% 
+  gather(feature, expression, -phenotime) 
+
+treg_tidy %>% 
+  ggplot(aes(x = phenotime, y = expression, color = feature)) +
+  geom_point(alpha = 0.7) + facet_wrap(~ feature, scales = "free_y") +
+  stat_smooth(se = FALSE, color = "black", method = "lm", formula = y ~ ns(x,3)) +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") +
+  ylab("Expression") + xlab("t")
+
+treg_plot <- last_plot()
+
+## Corelations
+group_by(treg_tidy, feature) %>% 
+  summarise(cor = cor(expression, phenotime, method = "spearman"))
+```
+
+Put all plots together for paper:
+
+```{r all-together}
+load("../figs/phenotime_diagram.Rdata")
+
+vs_pc1_grid <- plot_grid(pc1_vs_msi, pc1_vs_meta)
+
+plot_grid(phenotime_diagram, vs_pc1_grid, ard_plot, treg_plot, ncol = 1, labels = "AUTO")
+ggsave("../figs/paper_figure.png", width = 9, height = 15)
+```
+
+# CGPLVM
+
+```{r cgplvm}
+library(rstan)
+model <- stan_model("../../../phenot/synthetic/cgplvm.stan")
+d <- list(N = nrow(y), G = ncol(y), Y = t(scale(y)), 
+          x = x[,1], t_prior = rep(0, nrow(y)), t_sd = 1.0)
+# fit <- sampling(model, data = d, chains = 1, iter = 1000)
+fit <- vb(model, data = d, grad_samples = 1, output_samples = 500)
+```
+
+Displa
+

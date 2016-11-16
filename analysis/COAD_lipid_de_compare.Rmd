@@ -1,0 +1,355 @@
+---
+title: "Exploratory analysis of TCGA COAD data"
+author: "Kieran Campbell"
+date: "9 October 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(scater)
+library(tidyverse)
+library(magrittr)
+library(matrixStats)
+library(ggrepel)
+library(cowplot)
+library(biomaRt)
+library(viridis)
+library(stringr)
+library(Rcpp)
+library(limma)
+library(edgeR)
+library(MCMCglmm)
+library(splines)
+
+source("../gibbs/phenotime.R")
+sourceCpp("../gibbs/phenotime.cpp")
+
+set.seed(123L)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+# Data perparation
+
+```{r data-prep, include = TRUE, message = FALSE}
+load("../data/sce_coad_kallisto.Rdata")
+sce <- sce[matrixStats::rowVars(tpm(sce)) > 0, ]
+
+is_exprs(sce) <- tpm(sce) > 0
+
+
+sce <- calculateQCMetrics(sce)
+
+
+hgnc_symbols <- sapply(strsplit(featureNames(sce), "_"), `[`, 2)
+
+dvar <- data_frame(var_exprs = matrixStats::rowVars(exprs(sce)),
+                   hgnc_symbols, gene = featureNames(sce))
+fData(sce) <- cbind(fData(sce), dvar)
+
+set.seed(123L)
+sce <- plotPCA(sce, ncomponents = 3,
+               colour_by = "short_plate",
+               return_SCESet = TRUE)
+
+
+sc <- sce[, redDim(sce)[,1] < 0 & redDim(sce)[,3] > -10]
+
+## After subsetting, re-calculate QC metrics
+sc <- calculateQCMetrics(sc)
+rm(sce) # can't store large sceset (??)
+```
+
+And let's plot this and colour by tumour / normal:
+
+```{r sc-pca}
+plotPCA(sc, colour_by = "sample_type", ncomponents = 3)
+```
+
+And create an SCESet using just the tumour samples:
+
+```{r create tumour-only dataset}
+sc_tumour <- sc[, sc$sample_type != "normal"]
+```
+
+
+
+
+What do these transcripts correspond to?
+
+```{r transcripts-go-analysis}
+go_lipid <- "GO:0006629" # lipid metabolic process
+
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+la <- getBM(c("ensembl_transcript_id", "ensembl_gene_id"), filters = "go_id",
+                   values = go_lipid, mart = ensembl)
+
+fData(sc_tumour)$ensembl_transcript_id <- 
+  sapply(strsplit(featureNames(sc_tumour), ".", fixed = TRUE), `[`, 1)
+fData(sc_tumour)$is_lipid_transcript <- 
+  fData(sc_tumour)$ensembl_transcript_id %in% la$ensembl_transcript_id
+
+sc_lipid <- sc_tumour[fData(sc_tumour)$is_lipid_transcript &
+                        fData(sc_tumour)$var_exprs > 0.1, ]
+```
+
+
+Now construct the covariates:
+
+```{r construct-priors}
+x_metastasis <- 1 * (sc_tumour$m_stage != "m0")
+x_metastasis[is.na(x_metastasis)] <- mean(x_metastasis, na.rm = TRUE)
+x_metastasis <- scale_vec(x_metastasis)
+
+x_msi <- scale_vec( 1 * (sc_tumour$msi_status == "msi-h") )
+
+x <- cbind(x_msi, x_metastasis)
+```
+
+We can see if they're correlated:
+
+```{r are-covs-cor}
+print( cor(x) )
+```
+
+See if there's anything on a pca plot:
+
+```{r pca-plot}
+sc_lipid$x_msi <- x_msi
+sc_lipid$x_metastasis <- x_metastasis
+
+plotPCA(sc_lipid, colour_by = "x_msi", ncomponents = 4)
+plotPCA(sc_lipid, colour_by = "x_metastasis", ncomponents = 4)
+```
+
+And now we're good to fit phenotime:
+
+```{r fit-phenotime}
+x <- as.matrix(dplyr::select(pData(sc_lipid), x_msi, x_metastasis))
+y <- scale(t(exprs(sc_lipid)))
+```
+
+```{r gibbs-sample-lipid}
+set.seed(123)
+gibbs <- NULL
+if(file.exists("../data/gibbs_lipid_2.Rdata")) {
+  load("../data/gibbs_lipid_2.Rdata")
+} else {
+  gibbs <- phenot(y, x, iter = 8000, thin = 2)
+}
+```
+
+Diagnostic plot:
+
+```{r diagnostic-lipid}
+qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
+```
+
+Then extract MAP ordering and compare to PCA:
+
+```{r map-to-pca-nmd-lipid}
+tmap <- colMeans(gibbs$pst_trace)
+pc1 <- prcomp(y)$x[,1]
+pc2 <- prcomp(y)$x[,2]
+
+df_comp <- data_frame(tmap, pc1, msi = factor(x[,1]), meta = factor(x[,2]))
+df_comp$msi <- plyr::mapvalues(df_comp$msi, from = sort(unique(df_comp$msi)),
+                               to = c("Low", "High"))
+df_comp$meta <- plyr::mapvalues(df_comp$meta, from = sort(unique(df_comp$meta)),
+                               to = c("None", "Missing", "Metastasis"))
+
+ggplot(df_comp, aes(x = pc1, y = tmap, color = msi, shape = msi)) + geom_point() +
+  scale_color_brewer(palette = "Set1", name = "Microsatellite\nInstability") +
+  scale_shape_discrete(name = "Microsatellite\nInstability") +
+  xlab("Principal component 1") + ylab("t") +
+  theme(legend.position = "top")
+
+pc1_vs_msi <- last_plot()
+
+ggplot(df_comp, aes(x = pc1, y = tmap, color = meta, shape = meta)) + geom_point() +
+  scale_color_brewer(palette = "Set1", name = "Metastasis") +
+  scale_shape_discrete(name = "Metastasis") +
+  xlab("Principal component 1") + ylab("t") +
+  theme(legend.position = "top")
+
+pc1_vs_meta <- last_plot()
+```
+
+
+We also want to find genes that show an interaction:
+
+```{r find-interaction-genes-lipid}
+beta_1_confint <- HPDinterval(mcmc(gibbs$beta_trace[,1,]), prob = 0.9)
+beta_2_confint <- HPDinterval(mcmc(gibbs$beta_trace[,2,]), prob = 0.9)
+
+int_df <- data_frame(
+  gene = colnames(y),
+  hgnc_symbol = sapply(str_split(colnames(y), "_"), `[`, 2),
+  tau_pg_1_mean = colMeans(gibbs$tau_pg_trace[,1,]),
+  beta_1_mean = colMeans(gibbs$beta_trace[,1,]),
+  tau_pg_2_mean = colMeans(gibbs$tau_pg_trace[,2,]),
+  beta_2_mean = colMeans(gibbs$beta_trace[,2,]),
+  c_mean = colMeans(gibbs$c_trace),
+  alpha_1_mean = colMeans(gibbs$alpha_trace[,1,]),
+  alpha_2_mean = colMeans(gibbs$alpha_trace[,2,]),
+  eta_map = colMeans(gibbs$eta_trace),
+  beta_1_lower = beta_1_confint[,1],
+  beta_1_upper = beta_1_confint[,2],
+  beta_2_lower = beta_2_confint[,1],
+  beta_2_upper = beta_2_confint[,2]
+)
+
+abs_beta_cutoff <- 0.15
+tau_cutoff <- 1 / 0.016
+
+msi_ard_plot <- ggplot(int_df, aes(x = beta_1_mean, y = 1 / tau_pg_1_mean)) +
+  geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab(expression(paste("MAP ", beta))) +
+    ylab(expression(paste("[MAP ", chi ,"]" ^ "-1"))) +
+  geom_label_repel(data = filter(int_df, tau_pg_1_mean < tau_cutoff),
+                  aes(label = hgnc_symbol))
+
+meta_ard_plot <- ggplot(int_df, aes(x = beta_2_mean, y = 1 / tau_pg_2_mean)) +
+  geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab(expression(paste("MAP ", beta))) +
+    ylab(expression(paste("[MAP ", chi ,"]" ^ "-1"))) +
+  geom_label_repel(data = filter(int_df, tau_pg_2_mean < tau_cutoff),
+                  aes(label = hgnc_symbol))
+
+plot_grid(msi_ard_plot, meta_ard_plot, 
+          labels = c("Microsatellite instability", "Metastasis"))
+
+## Plot for paper
+df_ard <- data_frame(
+  tau_pg = c(int_df$tau_pg_1_mean, int_df$tau_pg_2_mean),
+  beta = c(int_df$beta_1_mean, int_df$beta_2_mean),
+  hgnc_symbol = rep(int_df$hgnc_symbol, 2),
+  covariate = factor(rep(c("Microsatellite instability", "Metastasis"), each = nrow(int_df)),
+                         levels = c("Microsatellite instability", "Metastasis"))
+)
+
+ggplot(df_ard, aes(x = beta, y = 1 / tau_pg)) +
+  geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
+  xlab(expression(paste("MAP ", beta))) +
+    ylab(expression(paste("[MAP ", chi ,"]" ^ "-1"))) +
+  geom_label_repel(data = filter(df_ard, tau_pg < tau_cutoff),
+                  aes(label = hgnc_symbol)) +
+  facet_wrap(~ covariate)
+
+ard_plot <- last_plot()
+```
+
+# Differential expression with limma voom
+
+```{r prep}
+retained_fnames <- rownames(sc_tumour[rowSums(counts(sc_tumour)) > 20, ])
+dge <- DGEList(counts(sc_tumour)[rowSums(counts(sc_tumour)) > 20, ])
+dge <- calcNormFactors(dge)
+```
+
+```{r voom}
+sc_lipid$msi_cov <- 1 * (sc_tumour$msi_status == "msi-h")
+x_metastasis <- 1 * (sc_tumour$m_stage != "m0")
+x_metastasis[is.na(x_metastasis)] <- 0 # 0 is most common, life is short
+sc_lipid$meta_cov <- x_metastasis
+design <- model.matrix(~ msi_cov + meta_cov, pData(sc_lipid))
+v <- voom(dge, design, plot = TRUE)
+```
+
+and then limma:
+
+```{r limma}
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
+results <- decideTests(fit)
+vennDiagram(results)
+```
+
+Let's make some plotss:
+
+```{r plots}
+int_df_limma <- rename(int_df, feature = gene)
+
+df_limma <- data_frame(msi_coef = fit$coefficients[,2], msi_pval = fit$p.value[,2],
+                       meta_coef = fit$coefficients[,3], meta_pval = fit$p.value[,3],
+                       feature = retained_fnames) %>% 
+  left_join(int_df_limma, by = "feature") %>% 
+  filter(msi_pval < 0.05 | meta_pval < 0.05| !is.na(beta_1_mean)) %>% 
+  mutate(msi_log10pval = -log10(msi_pval)) %>% 
+  mutate(meta_log10pval = -log10(meta_pval))
+
+df_limma %<>% mutate(beta_1_sig = (beta_1_lower > 0 & beta_1_upper > 0) | (beta_1_lower < 0 & beta_1_upper < 0)) 
+df_limma %<>% mutate(beta_2_sig = (beta_2_lower > 0 & beta_2_upper > 0) | (beta_2_lower < 0 & beta_2_upper < 0)) 
+df <- filter(df_limma, !is.na(beta_1_mean))
+
+ggplot(df_limma, aes(x = msi_coef, y = msi_log10pval)) + geom_point(alpha = 0.5)
+ggplot(df_limma, aes(x = meta_coef, y = meta_log10pval)) + geom_point(alpha = 0.5)
+
+# Volcano plots coloured by beta
+ggplot(df_limma, aes(x = msi_coef, y = msi_log10pval)) + geom_point(alpha = 0.8, color = 'grey') +
+  geom_point(data = df, aes(color = beta_1_mean)) +
+  scale_color_viridis() + xlab("limma voom coefficient") + ylab("-log10pval (uncorrected)")
+
+ggplot(df_limma, aes(x = meta_coef, y = meta_log10pval)) + geom_point(alpha = 0.8, color = 'grey') +
+  geom_point(data = df, aes(color = beta_2_mean)) +
+  scale_color_viridis() + xlab("limma voom coefficient") + ylab("-log10pval (uncorrected)")
+
+
+
+ggplot(filter(df_limma, !is.na(beta_1_mean)), aes(x = -log10pval, y = alpha_mean)) + geom_point()
+ggplot(filter(df_limma, !is.na(beta_1_mean)), aes(x = coef, y = alpha_mean, color = beta_1_mean)) + 
+  geom_point() + scale_color_viridis()
+ggplot(filter(df_limma, !is.na(beta_1_mean)), aes(x = beta_1_mean, y = log10pval)) + 
+  geom_point() + scale_color_viridis() + geom_hline(yintercept = -log10(0.05), linetype = 2, color = 'grey')
+
+ggplot(filter(df_limma, !is.na(beta_1_mean)), aes(x = beta_1_mean, y = msi_log10pval, color = beta_1_sig)) + 
+  geom_point()  + geom_hline(yintercept = -log10(0.05), linetype = 2, color = 'grey') +
+  scale_color_brewer(palette = "Set1", name = "BayesSig?") +
+  geom_text_repel(data = filter(df_limma, beta_1_sig), aes(label = feature))
+
+ggplot(filter(df_limma, !is.na(beta_2_mean)), aes(x = beta_2_mean, y = meta_log10pval, color = beta_2_sig)) + 
+  geom_point()  + geom_hline(yintercept = -log10(0.05), linetype = 2, color = 'grey') +
+  scale_color_brewer(palette = "Set1", name = "BayesSig?") +
+  geom_text_repel(data = filter(df_limma, beta_2_sig), aes(label = feature))
+
+
+
+ggplot(df, aes(x = beta_1_mean, y = beta_1_mean, color = beta_1_sig)) + geom_point()  +
+  geom_errorbar(aes(ymin = beta_1_lower, ymax = beta_1_upper))
+
+ggplot(df, aes(x = beta_2_mean, y = beta_2_mean, color = beta_2_sig)) + 
+  geom_point()  +
+  geom_errorbar(aes(ymin = beta_2_lower, ymax = beta_2_upper))
+
+## Compare alphas:
+
+plot_grid(ggplot(df, aes(x = msi_coef, y = alpha_1_mean, color = beta_1_mean)) +
+            geom_point() + scale_color_viridis(),
+          ggplot(df, aes(x = meta_coef, y = alpha_2_mean, color = beta_2_mean)) +
+            geom_point() + scale_color_viridis())
+
+```
+
+We can plot this gene expression:
+
+```{r plot-expression}
+y[, filter(df, beta_1_sig) %>% extract2("feature")] %>% 
+  as_data_frame() %>% mutate(phenotime = tmap, x = factor(sc_lipid$msi_cov)) %>% 
+  gather(gene, expression, -phenotime, -x) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
+  facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(palette = "Set1", name = "MSI-high") +
+  stat_smooth(se = FALSE, method = "lm", size = 2)
+
+y[, filter(df, beta_2_sig) %>% extract2("feature")] %>% 
+  as_data_frame() %>% mutate(phenotime = tmap, x = factor(sc_lipid$meta_cov)) %>% 
+  gather(gene, expression, -phenotime, -x) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
+  facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(palette = "Set1", name = "Metastatic") +
+  stat_smooth(se = FALSE, method = "lm", size = 2)
+```
+
+

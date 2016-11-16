@@ -1,0 +1,139 @@
+---
+title: "Synthetic models"
+author: "Kieran Campbell"
+date: "21 October 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(scater)
+library(tidyverse)
+library(magrittr)
+library(matrixStats)
+library(ggrepel)
+library(rstan)
+library(MCMCglmm)
+library(coda)
+library(cowplot)
+library(biomaRt)
+library(Rcpp)
+
+source("../gibbs/phenotime.R")
+sourceCpp("../gibbs/phenotime.cpp")
+
+set.seed(15L)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+
+Define sigmoid:
+
+```{r sigmoid}
+sigmoid <- function(pst, mu0, k, t0) 2 * mu0 / (1 + exp(-k*(pst - t0)))
+```
+
+Simulate data: first 20 genes are regulated differently depending on x status and second 20 on y status.
+
+```{r simulate-data}
+N <- 200
+G <- 40
+
+pst <- runif(N)
+t0 <- rnorm(G, 0.5, 0.1)
+k <- sample(c(-1, 1), replace = TRUE, size = G) * runif(G, 5, 10)
+mu0 <- runif(G, 1, 4)
+
+beta <- c(rep(0, G / 2),
+          sample(c(-1, 1), replace = TRUE, size = G / 2) * runif(G / 2, 1,5))
+
+x <- sample(c(0,1), replace = TRUE, size = N)
+
+mu <- matrix(NA, nrow = N, ncol = G)
+
+for(i in 1:N) {
+  for(g in 1:G) {
+    mu[i,g] <- sigmoid(pst[i], mu0[g] + beta[g] * x[i], k[g], t0[g])
+  }
+}
+
+# turn into noisy measurements
+y <- t( apply(mu, 1, function(x) rnorm(length(x), x, 1)) )
+
+```
+
+Visualise:
+
+```{r visualise-synthetic, fig.width = 12, fig.height = 10}
+y_tidy <- as_data_frame(y) %>% 
+  mutate(pst = pst, x = factor(x)) %>% 
+  gather(gene, expression, -pst, -x) %>% 
+  arrange(gene, pst)
+
+ggplot(y_tidy, aes(x = pst, y = expression, color = x)) + 
+  geom_point() + facet_wrap(~ gene) +
+  scale_colour_brewer(palette = "Set1")
+```
+
+Exporatory analysis:
+
+```{r explor-anal}
+pc_tidy <- as_data_frame(prcomp(y)$x[,1:2]) %>% 
+  mutate(x = factor(x), pst = pst)
+
+ggplot(pc_tidy, aes(x = PC1, y = PC2, color = x)) + 
+  geom_point() + scale_color_brewer(palette = "Set1")
+```
+
+
+```{r gibbs-sample-lipid}
+gibbs <- phenot(scale(y), scale(matrix(x, ncol = 1)), iter = 4000, thin = 2)
+```
+
+Diagnostic plot:
+
+```{r diagnostic-lipid}
+qplot(seq_along(gibbs$lp_trace), gibbs$lp_trace, geom = 'line')
+```
+
+Then extract MAP ordering and compare to PCA:
+
+```{r map-to-pca-nmd-lipid}
+tmap <- colMeans(gibbs$pst_trace)
+pc1 <- prcomp(y)$x[,1]
+pc2 <- prcomp(y)$x[,2]
+
+data_frame(tmap, pc1, x = factor(x)) %>% 
+  ggplot(aes(x = pc1, y = tmap, color = x)) + geom_point() +
+  scale_color_brewer(palette = "Set1") + ylab("phenotime")
+```
+
+
+Let's compare PC1, phenotime and true pst:
+
+```{r compare-all}
+df_comp <- data.frame(phenotime = tmap, pc1, true_t = pst)
+GGally::ggpairs(df_comp)
+```
+
+We also want to find genes that show an interaction:
+
+```{r find-interaction-genes-lipid}
+int_df <- data_frame(
+  tau_pg_map = matrixStats::colMedians(gibbs$tau_pg_trace[,1,]),
+  beta_mean = colMeans(gibbs$beta_trace[,1,]),
+  c_mean = colMeans(gibbs$c_trace),
+  alpha_mean = colMeans(gibbs$alpha_trace[,1,]),
+  eta_map = colMeans(gibbs$eta_trace),
+  is_x_reg = rep(c(FALSE, TRUE), each = G / 2)
+)
+
+
+ggplot(int_df, aes(x = abs(beta_mean), y = 1 / tau_pg_map, fill = is_x_reg)) +
+  geom_point(shape = 21, size = 3, alpha = 0.9) + 
+  xlab("Coefficient magnitude") + ylab("Posterior variance")
+```
+
+

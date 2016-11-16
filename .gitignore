@@ -1,0 +1,9 @@
+*.gz
+*.html
+*.Rdata
+*_cache*
+*_files*
+*.pdf
+*.tgz
+*.csv
+*.Rhistory
