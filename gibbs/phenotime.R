@@ -21,11 +21,15 @@ mcmcify2 <- function(name, iter, dim1, dim2 = NULL) {
 
 log_sum_exp <- function(x) log(sum(exp(x - max(x)))) + max(x)
 
+log_dnorm <- function(x, mean, precision) dnorm(x, mean, 1 / sqrt(precision), log = TRUE)
 
 #' Calculate the log-posterior during inference
 #' 
 #' @importFrom stats dgamma dnorm
-posterior <- function(y, x, pst, c, eta, alpha, beta, tau) {
+posterior <- function(y, x, pst, c, eta, alpha, beta, tau, tau_pg,
+                      q = rep(0, nrow(y)), tau_q = 1, 
+                      tau_alpha = 1, tau_c = 1, a = 2, b = 1,
+                      a_beta = 6, b_beta = 0.1, tau_eta = 0.1) {
   G <- ncol(y)
   N <- nrow(y)
   P <- ncol(x)
@@ -44,7 +48,18 @@ posterior <- function(y, x, pst, c, eta, alpha, beta, tau) {
 
   ll <- sum(ll_i)
   
-  return( ll  )
+  # now prior
+  priors <- list()
+  priors$alpha <- sum(apply(alpha, 1, log_dnorm, 0, tau_alpha))
+  priors$c <- sum(log_dnorm(c, 0, tau_c))
+  priors$t <- sum(log_dnorm(pst, q, tau_q))
+  priors$tau_pg <- sum(apply(tau_pg, 1, dgamma, a_beta, b_beta, log = TRUE))
+  priors$tau <- sum(dgamma(tau, a, b, log = TRUE))
+  priors$eta <- sum(log_dnorm(eta, 0, tau_eta))
+  priors$beta <- sum(sapply(seq_len(G), function(g) log_dnorm(beta[,g], 0, tau_pg[,g])))
+  
+  posterior <- ll + sum(unlist(priors))
+  return( posterior  )
 }
 
 

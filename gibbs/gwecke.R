@@ -91,7 +91,8 @@ sample_data <- function(x, pst, c, eta, alpha, beta, tau) {
     for(g in seq_len(G)) {
       mu[i,g] <- eta[g] + pst[i] * c[g]
       for(p in seq_len(P)) {
-        mu[i,g] <- mu[i,g] + alpha[p,g] * x[i,p] + pst[i] * beta[p,g] * x[i,p]
+        mu_tmp <- alpha[p,g] * x[i,p] + pst[i] * beta[p,g] * x[i,p]
+        mu[i,g] <- mu[i,g] + mu_tmp
       }
     }
   }

@@ -1,0 +1,222 @@
+---
+title: "Gwecke test for consistency of Gibbs sampler"
+author: "Kieran Campbell"
+date: "16 November 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(tidyverse)
+library(Rcpp)
+library(testthat)
+
+source("../gibbs/phenotime.R")
+sourceCpp("../gibbs/phenotime.cpp")
+source("../gibbs/gwecke.R")
+
+set.seed(123L)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+# Setup
+
+Make some synthetic x and an initial y:
+
+```{r synthetic}
+N <- 200
+G <- 8
+P <- 2
+
+x <- scale(matrix(sample(0:1, size = N * P, replace = TRUE), ncol = P))
+
+```
+
+Specify initial parameter values:
+
+```{r init-vals}
+
+## precision parameters
+tau <- rep(1, G)
+
+## pseudotime parameters
+pst <-  rnorm(N)
+
+## parameter initialisation
+alpha <- matrix(0, nrow = P, ncol = G)
+beta <- matrix(0, nrow = P, ncol = G)
+c <- rep(0, G)
+eta <- rep(0, G)
+
+tau_pg <- matrix(rgamma(P * G, 1, 0.1), nrow = P, ncol  = G)
+
+## sample a y
+y <- forward_sample(x, G, rmean = FALSE)
+```
+
+Handy hyperpar values:
+
+```{r hyperpar-vals}
+q = rep(0, nrow(y)) 
+tau_q = 1
+tau_alpha = 1
+tau_c = 1
+a = 2
+b = 1
+a_beta = 6
+b_beta = 0.1
+tau_eta = 0.1
+```
+
+# Unit tests
+
+This is going to be tedious
+
+## C
+
+```{r unit-testing-c}
+cpar <- cond_par_c(y, x, eta, alpha, beta, pst, tau, tau_c)
+
+cp <- c <- rnorm(G, 0, 1)
+cp[1] <- 0
+
+rhs <- posterior(y, x, pst, cp, eta, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) - 
+  posterior(y, x, pst, c, eta, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) 
+
+lhs <- sum(log_dnorm(cp, cpar[,1], cpar[,2])) -
+  sum(log_dnorm(c, cpar[,1], cpar[,2]))
+
+expect_equal(lhs, rhs)
+```
+
+## Eta (or mu_g)
+
+```{r unit-testing-eta}
+eta_par <- cond_par_eta(y, x, pst, c, alpha, beta, tau, tau_eta)
+
+etap <- eta <- rnorm(G, 0, 1)
+etap[1] <- 0
+
+rhs <- posterior(y, x, pst, c, etap, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) - 
+  posterior(y, x, pst, c, eta, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) 
+
+lhs <- sum(log_dnorm(etap, eta_par[,1], eta_par[,2])) -
+  sum(log_dnorm(eta, eta_par[,1], eta_par[,2]))
+
+expect_equal(lhs, rhs)
+```
+
+
+## Pst
+
+```{r unit-testing-eta}
+pst_par <- cond_par_pst(y, x, eta, alpha, beta, q, tau_q, c, tau)
+
+pstp <- pst <- rnorm(N, 0, 1)
+pstp[1] <- 0
+
+rhs <- posterior(y, x, pstp, c, eta, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) - 
+  posterior(y, x, pst, c, eta, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) 
+
+lhs <- sum(log_dnorm(pstp, pst_par[,1], pst_par[,2])) -
+  sum(log_dnorm(pst, pst_par[,1], pst_par[,2]))
+
+expect_equal(lhs, rhs)
+```
+
+## Alpha
+
+```{r unit-testing-eta}
+alpha_par <- cond_par_alpha(0, 0, y, x, eta, pst, tau_alpha, alpha, beta, c, tau)
+
+alphap <- alpha
+alphap[1] <- 1
+
+rhs <- posterior(y, x, pst, c, eta, alphap, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) - 
+  posterior(y, x, pst, c, eta, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) 
+
+lhs <- sum(log_dnorm(alphap[1,1], alpha_par[1], alpha_par[2])) -
+  sum(log_dnorm(alpha[1,1], alpha_par[1], alpha_par[2]))
+
+expect_equal(lhs, rhs)
+```
+
+## Beta
+
+```{r unit-testing-eta}
+beta_par <- cond_par_beta(0, 0, y, x, eta, pst, tau_alpha, alpha, beta, c, tau, tau_pg)
+
+betap <- beta
+betap[1] <- 1
+
+rhs <- posterior(y, x, pst, c, eta, alpha, betap, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) - 
+  posterior(y, x, pst, c, eta, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) 
+
+lhs <- sum(log_dnorm(betap[1,1], beta_par[1], beta_par[2])) -
+  sum(log_dnorm(beta[1,1], beta_par[1], beta_par[2]))
+
+expect_equal(lhs, rhs)
+```
+
+## Tau
+
+
+
+
+# Gwecke test
+
+```{r gwecke-test}
+n_samples <- 1000
+
+## Forward samples
+fs_get_dim <- forward_sample(x, G)
+fs_df <- data.frame(matrix(NA, nrow = n_samples, ncol = length(fs_get_dim)))
+names(fs_df) <- names(fs_get_dim)
+
+for(i in 1:n_samples)
+  fs_df[i,] <- unlist(forward_sample(x,G))
+
+gs_df <- data.frame(matrix(NA, nrow = n_samples, ncol = length(fs_get_dim)))
+names(gs_df) <- names(fs_get_dim)
+
+pars <- list(
+  alpha = alpha, beta = beta, 
+  c = c, pst = pst, 
+  tau = tau, tau_pg = tau_pg,
+  eta = eta
+)
+
+y <- forward_sample(x, G, rmean = FALSE)
+
+for(ns in seq_len(n_samples)) {
+  gstep <- gibbs_step(y, x, pars$pst, pars$c, pars$eta, 
+                        pars$alpha, pars$beta, pars$tau, pars$tau_pg)
+  pars <- gstep$pars
+  par_means <- sapply(pars, mean)
+  gs_df[ns,] <- c(mean(gstep$y), par_means)
+}
+```
+
+And plot results:
+
+```{r plot-results}
+par(mfrow = c(2,4))
+for(variable in names(gs_df)) {
+  qqplot(fs_df[(n_samples / 2):n_samples, variable], 
+         gs_df[(n_samples / 2):n_samples, variable])
+  title(variable)
+}
+```
+
