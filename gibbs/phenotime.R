@@ -140,7 +140,7 @@ phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2,
     tau_pg <- sample_tau_pg(beta, a_beta, b_beta);
     
     # Sample eta
-    eta <- sample_eta(y, x, pst, c, alpha, beta, tau)
+    eta <- sample_eta(y, x, pst, c, alpha, beta, tau, tau_eta)
     
     
     # Add some relevant variables to trace    

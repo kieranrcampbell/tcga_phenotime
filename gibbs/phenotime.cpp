@@ -23,7 +23,7 @@ NumericVector sample_c(NumericMatrix y, NumericMatrix x, NumericVector eta,
       for(int p = 0; p < P; p++) {
         mu_ig += x(i,p) * alpha(p,g)  + pst[i] * (beta(p,g) * x(i,p));
       }
-      mu(i,g) = mu_ig;
+      mu(i,g) = mu_ig + eta[g];
     }
   }
   
@@ -37,7 +37,7 @@ NumericVector sample_c(NumericMatrix y, NumericMatrix x, NumericVector eta,
   for(int g = 0; g < G; g++) { 
     tau_new[g] = tau_c + pst_square_sum * tau[g];
     for(int i = 0; i < N; i++) {
-      mu_new[g] += tau[g] * pst[i] * (y(i,g) - eta[g] - mu(i,g));
+      mu_new[g] += tau[g] * pst[i] * (y(i,g) - mu(i,g));
     }
     mu_new[g] /= tau_new[g];
   }
