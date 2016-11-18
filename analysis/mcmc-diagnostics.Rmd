@@ -26,7 +26,7 @@ scale_vec <- function(x) (x - mean(x)) / sd(x)
 Make some synthetic x and an initial y:
 
 ```{r synthetic}
-N <- 200
+N <- 80
 G <- 8
 P <- 2
 
@@ -115,7 +115,7 @@ expect_equal(lhs, rhs)
 
 ## Pst
 
-```{r unit-testing-eta}
+```{r unit-testing-pst}
 pst_par <- cond_par_pst(y, x, eta, alpha, beta, q, tau_q, c, tau)
 
 pstp <- pst <- rnorm(N, 0, 1)
@@ -134,7 +134,7 @@ expect_equal(lhs, rhs)
 
 ## Alpha
 
-```{r unit-testing-eta}
+```{r unit-testing-alpha}
 alpha_par <- cond_par_alpha(0, 0, y, x, eta, pst, tau_alpha, alpha, beta, c, tau)
 
 alphap <- alpha
@@ -153,7 +153,7 @@ expect_equal(lhs, rhs)
 
 ## Beta
 
-```{r unit-testing-eta}
+```{r unit-testing-beta}
 beta_par <- cond_par_beta(0, 0, y, x, eta, pst, tau_alpha, alpha, beta, c, tau, tau_pg)
 
 betap <- beta
@@ -172,13 +172,46 @@ expect_equal(lhs, rhs)
 
 ## Tau
 
+```{r unit-testing-tau}
+taupar <- cond_par_tau(y, x, eta, pst, alpha, beta, c, a, b)
 
+tau_p <- tau
+tau_p[1] <- tau[1] + 1e-6
 
+rhs <- posterior(y, x, pst, c, eta, alpha, beta, tau_p, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) - 
+  posterior(y, x, pst, c, eta, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) 
+
+lhs <- sum(dgamma(tau_p, a + N / 2, taupar, log = TRUE)) -
+  sum(dgamma(tau, a + N / 2, taupar, log = TRUE))
+
+expect_equal(lhs, rhs)
+```
+
+## Tau pg
+
+```{r unit-testing-taupg}
+tau_pg_par <- cond_par_tau_pg(0, 0, beta, b_beta)
+
+tau_pgp <- tau_pg
+tau_pgp[1] <- 1
+
+rhs <- posterior(y, x, pst, c, eta, alpha, beta, tau, tau_pgp, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) - 
+  posterior(y, x, pst, c, eta, alpha, beta, tau, tau_pg, q, tau_q, tau_alpha,
+          tau_c, a, b, a_beta, b_beta, tau_eta) 
+
+lhs <- dgamma(tau_pgp[1], a_beta + 1 / 2, tau_pg_par, log = TRUE) - 
+  dgamma(tau_pg[1], a_beta + 1 / 2, tau_pg_par, log = TRUE)
+
+expect_equal(lhs, rhs)
+```
 
 # Gwecke test
 
 ```{r gwecke-test}
-n_samples <- 1000
+n_samples <- 4000
 
 ## Forward samples
 fs_get_dim <- forward_sample(x, G)
@@ -206,6 +239,7 @@ for(ns in seq_len(n_samples)) {
   pars <- gstep$pars
   par_means <- sapply(pars, mean)
   gs_df[ns,] <- c(mean(gstep$y), par_means)
+  y <- gstep$y
 }
 ```
 

@@ -308,14 +308,14 @@ NumericMatrix sample_beta(NumericMatrix y, NumericMatrix x, NumericVector eta,
 
 
 // [[Rcpp::export]]
-NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector eta,
-                         NumericVector pst,
-                        NumericMatrix alpha, NumericMatrix beta,
-                        NumericVector c, double a, double b) {
-  
+NumericVector cond_par_tau(NumericMatrix y, NumericMatrix x, NumericVector eta,
+                           NumericVector pst,
+                           NumericMatrix alpha, NumericMatrix beta,
+                           NumericVector c, double a, double b) {
   int G = y.ncol();
   int N = y.nrow();
   int P = x.ncol();
+  NumericVector new_pars(G); 
   
   NumericMatrix mu(N, G);
   
@@ -327,16 +327,40 @@ NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector eta,
       }
     }
   }
-    
-  NumericVector tau(G);
+  
+
   for(int g = 0; g < G; g++) {
     double b_new = b;
-    for(int i = 0; i < N; i++) 
-      b_new += 0.5 * (y(i,g) - mu(i,g)) * (y(i,g) - mu(i,g));
-    
-    tau(g) = as<double>(rgamma(1, a + N / 2, 1 / b_new)); // !!! RCPP gamma parametrised by shape - scale
+    for(int i = 0; i < N; i++) {
+      b_new += 0.5 * pow(y(i,g) - mu(i,g), 2); // * (y(i,g) - mu(i,g));
+    }
+    new_pars[g] = b_new;
   }
+  return new_pars; 
+}
+
+// [[Rcpp::export]]
+NumericVector sample_tau(NumericMatrix y, NumericMatrix x, NumericVector eta,
+                         NumericVector pst,
+                        NumericMatrix alpha, NumericMatrix beta,
+                        NumericVector c, double a, double b) {
+  
+  int G = y.ncol();
+  int N = y.nrow();
+
+  NumericVector new_pars = cond_par_tau(y, x, eta, pst, alpha, beta, c, a, b);
+  NumericVector tau(G);
+  
+  for(int g = 0; g < G; g++) {
+    tau(g) = as<double>(rgamma(1, a + N / 2, 1 / new_pars[g])); // !!! RCPP gamma parametrised by shape - scale
+  }
+
   return tau;
+}
+
+// [[Rcpp::export]]
+double cond_par_tau_pg(int p, int g, NumericMatrix beta, double b_beta) {
+  return b_beta + beta(p,g) * beta(p,g) / 2;
 }
 
 // [[Rcpp::export]]
@@ -346,13 +370,13 @@ NumericMatrix sample_tau_pg(NumericMatrix beta,
   int G = beta.ncol();
   
   NumericMatrix tau_pg(P, G);
-  
   for(int p = 0; p < P; p++) {
     for(int g = 0; g < G; g++) {
-      double beta_new = b_beta + beta(p,g) * beta(p,g) / 2;
+      double beta_new = cond_par_tau_pg(p, g, beta, b_beta);
       tau_pg(p,g) = as<double>(rgamma(1, a_beta + 1 / 2, 1 / beta_new));
     }
   }
+  
   return tau_pg;
 }
   
