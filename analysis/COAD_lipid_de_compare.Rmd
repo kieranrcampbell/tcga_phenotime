@@ -93,6 +93,8 @@ fData(sc_tumour)$is_lipid_transcript <-
 
 sc_lipid <- sc_tumour[fData(sc_tumour)$is_lipid_transcript &
                         fData(sc_tumour)$var_exprs > 0.1, ]
+
+
 ```
 
 
@@ -124,6 +126,12 @@ plotPCA(sc_lipid, colour_by = "x_msi", ncomponents = 4)
 plotPCA(sc_lipid, colour_by = "x_metastasis", ncomponents = 4)
 ```
 
+Save this:
+
+```{r save-sce-lipid}
+save(sc_lipid, file = "../data/sce_coad_lipid.Rdata")
+```
+
 And now we're good to fit phenotime:
 
 ```{r fit-phenotime}
@@ -134,10 +142,13 @@ y <- scale(t(exprs(sc_lipid)))
 ```{r gibbs-sample-lipid}
 set.seed(123)
 gibbs <- NULL
-if(file.exists("../data/gibbs_lipid_2.Rdata")) {
-  load("../data/gibbs_lipid_2.Rdata")
+gibbs_file <- "../data/gibbs_lipid_fixed.Rdata"
+if(file.exists(gibbs_file)) {
+  load(gibbs_file)
 } else {
   gibbs <- phenot(y, x, iter = 8000, thin = 2)
+  save(gibbs, file = gibbs_file)
+  
 }
 ```
 
@@ -202,20 +213,20 @@ int_df <- data_frame(
 )
 
 abs_beta_cutoff <- 0.15
-tau_cutoff <- 1 / 0.016
+tau_cutoff <- 1 / 0.019
 
 msi_ard_plot <- ggplot(int_df, aes(x = beta_1_mean, y = 1 / tau_pg_1_mean)) +
   geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
   xlab(expression(paste("MAP ", beta))) +
     ylab(expression(paste("[MAP ", chi ,"]" ^ "-1"))) +
-  geom_label_repel(data = filter(int_df, tau_pg_1_mean < tau_cutoff),
+  geom_label_repel(data = dplyr::filter(int_df, tau_pg_1_mean < tau_cutoff),
                   aes(label = hgnc_symbol))
 
 meta_ard_plot <- ggplot(int_df, aes(x = beta_2_mean, y = 1 / tau_pg_2_mean)) +
   geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
   xlab(expression(paste("MAP ", beta))) +
     ylab(expression(paste("[MAP ", chi ,"]" ^ "-1"))) +
-  geom_label_repel(data = filter(int_df, tau_pg_2_mean < tau_cutoff),
+  geom_label_repel(data = dplyr::filter(int_df, tau_pg_2_mean < tau_cutoff),
                   aes(label = hgnc_symbol))
 
 plot_grid(msi_ard_plot, meta_ard_plot, 
@@ -234,11 +245,12 @@ ggplot(df_ard, aes(x = beta, y = 1 / tau_pg)) +
   geom_point(size = 2, alpha = 0.9) + #viridis::scale_fill_viridis(name = "MAP |c|") +
   xlab(expression(paste("MAP ", beta))) +
     ylab(expression(paste("[MAP ", chi ,"]" ^ "-1"))) +
-  geom_label_repel(data = filter(df_ard, tau_pg < tau_cutoff),
+  geom_label_repel(data = dplyr::filter(df_ard, tau_pg < tau_cutoff),
                   aes(label = hgnc_symbol)) +
   facet_wrap(~ covariate)
 
 ard_plot <- last_plot()
+ard_plot
 ```
 
 # Differential expression with limma voom
@@ -270,19 +282,19 @@ vennDiagram(results)
 Let's make some plotss:
 
 ```{r plots}
-int_df_limma <- rename(int_df, feature = gene)
+int_df_limma <- dplyr::rename(int_df, feature = gene)
 
 df_limma <- data_frame(msi_coef = fit$coefficients[,2], msi_pval = fit$p.value[,2],
                        meta_coef = fit$coefficients[,3], meta_pval = fit$p.value[,3],
                        feature = retained_fnames) %>% 
   left_join(int_df_limma, by = "feature") %>% 
-  filter(msi_pval < 0.05 | meta_pval < 0.05| !is.na(beta_1_mean)) %>% 
-  mutate(msi_log10pval = -log10(msi_pval)) %>% 
-  mutate(meta_log10pval = -log10(meta_pval))
+  dplyr::filter(msi_pval < 0.05 | meta_pval < 0.05| !is.na(beta_1_mean)) %>% 
+  dplyr::mutate(msi_log10pval = -log10(msi_pval)) %>% 
+  dplyr::mutate(meta_log10pval = -log10(meta_pval))
 
-df_limma %<>% mutate(beta_1_sig = (beta_1_lower > 0 & beta_1_upper > 0) | (beta_1_lower < 0 & beta_1_upper < 0)) 
-df_limma %<>% mutate(beta_2_sig = (beta_2_lower > 0 & beta_2_upper > 0) | (beta_2_lower < 0 & beta_2_upper < 0)) 
-df <- filter(df_limma, !is.na(beta_1_mean))
+df_limma %<>% dplyr::mutate(beta_1_sig = (beta_1_lower > 0 & beta_1_upper > 0) | (beta_1_lower < 0 & beta_1_upper < 0)) 
+df_limma %<>% dplyr::mutate(beta_2_sig = (beta_2_lower > 0 & beta_2_upper > 0) | (beta_2_lower < 0 & beta_2_upper < 0)) 
+df <- dplyr::filter(df_limma, !is.na(beta_1_mean))
 
 ggplot(df_limma, aes(x = msi_coef, y = msi_log10pval)) + geom_point(alpha = 0.5)
 ggplot(df_limma, aes(x = meta_coef, y = meta_log10pval)) + geom_point(alpha = 0.5)
@@ -298,21 +310,25 @@ ggplot(df_limma, aes(x = meta_coef, y = meta_log10pval)) + geom_point(alpha = 0.
 
 
 
-ggplot(filter(df_limma, !is.na(beta_1_mean)), aes(x = -log10pval, y = alpha_mean)) + geom_point()
-ggplot(filter(df_limma, !is.na(beta_1_mean)), aes(x = coef, y = alpha_mean, color = beta_1_mean)) + 
+ggplot(dplyr::filter(df_limma, !is.na(beta_1_mean)), 
+       aes(y = msi_log10pval, x = alpha_1_mean)) + geom_point()
+
+ggplot(dplyr::filter(df_limma, !is.na(beta_1_mean)),
+       aes(x = msi_coef, y = alpha_1_mean, color = beta_1_mean)) + 
   geom_point() + scale_color_viridis()
-ggplot(filter(df_limma, !is.na(beta_1_mean)), aes(x = beta_1_mean, y = log10pval)) + 
+
+ggplot(dplyr::filter(df_limma, !is.na(beta_1_mean)), aes(x = beta_1_mean, y = msi_log10pval)) + 
   geom_point() + scale_color_viridis() + geom_hline(yintercept = -log10(0.05), linetype = 2, color = 'grey')
 
-ggplot(filter(df_limma, !is.na(beta_1_mean)), aes(x = beta_1_mean, y = msi_log10pval, color = beta_1_sig)) + 
+ggplot(dplyr::filter(df_limma, !is.na(beta_1_mean)), aes(x = beta_1_mean, y = msi_log10pval, color = beta_1_sig)) + 
   geom_point()  + geom_hline(yintercept = -log10(0.05), linetype = 2, color = 'grey') +
   scale_color_brewer(palette = "Set1", name = "BayesSig?") +
-  geom_text_repel(data = filter(df_limma, beta_1_sig), aes(label = feature))
+  geom_text_repel(data = dplyr::filter(df_limma, beta_1_sig), aes(label = feature))
 
-ggplot(filter(df_limma, !is.na(beta_2_mean)), aes(x = beta_2_mean, y = meta_log10pval, color = beta_2_sig)) + 
+ggplot(dplyr::filter(df_limma, !is.na(beta_2_mean)), aes(x = beta_2_mean, y = meta_log10pval, color = beta_2_sig)) + 
   geom_point()  + geom_hline(yintercept = -log10(0.05), linetype = 2, color = 'grey') +
   scale_color_brewer(palette = "Set1", name = "BayesSig?") +
-  geom_text_repel(data = filter(df_limma, beta_2_sig), aes(label = feature))
+  geom_text_repel(data = dplyr::filter(df_limma, beta_2_sig), aes(label = feature))
 
 
 
@@ -335,16 +351,18 @@ plot_grid(ggplot(df, aes(x = msi_coef, y = alpha_1_mean, color = beta_1_mean)) +
 We can plot this gene expression:
 
 ```{r plot-expression}
-y[, filter(df, beta_1_sig) %>% extract2("feature")] %>% 
-  as_data_frame() %>% mutate(phenotime = tmap, x = factor(sc_lipid$msi_cov)) %>% 
+y[, dplyr::filter(df, beta_1_sig) %>% extract2("feature")] %>% 
+  as_data_frame() %>% 
+  dplyr::mutate(phenotime = tmap, x = factor(sc_lipid$msi_cov)) %>% 
   gather(gene, expression, -phenotime, -x) %>% 
   ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
   facet_wrap(~ gene, scales = "free_y") + 
   scale_color_brewer(palette = "Set1", name = "MSI-high") +
   stat_smooth(se = FALSE, method = "lm", size = 2)
 
-y[, filter(df, beta_2_sig) %>% extract2("feature")] %>% 
-  as_data_frame() %>% mutate(phenotime = tmap, x = factor(sc_lipid$meta_cov)) %>% 
+y[, dplyr::filter(df, beta_2_sig) %>% extract2("feature")] %>% 
+  as_data_frame() %>% 
+  dplyr::mutate(phenotime = tmap, x = factor(sc_lipid$meta_cov)) %>% 
   gather(gene, expression, -phenotime, -x) %>% 
   ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
   facet_wrap(~ gene, scales = "free_y") + 

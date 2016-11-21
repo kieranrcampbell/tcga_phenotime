@@ -172,7 +172,9 @@ phenot <- function(y, x, iter = 2000, thin = 1, burn = iter / 2,
       
       eta_trace[sample_pos,] <- eta
 
-      lp_trace[sample_pos,] <- posterior(y, x, pst, c, eta, alpha, beta, tau)
+      lp_trace[sample_pos,] <- posterior(y, x, pst, c, eta, alpha, beta, tau,
+                                         tau_pg, q, tau_q, tau_alpha, tau_c,
+                                         a, b, a_beta, b_beta, tau_eta)
     }
   }
   traces <- list(tau_trace = tau_trace, lp_trace = lp_trace, c_trace = c_trace,
