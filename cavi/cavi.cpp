@@ -161,7 +161,40 @@ NumericMatrix cavi_update_c(NumericMatrix y, NumericMatrix x,
   
   return c_update;  
 }
+
+// [[Rcpp::export]]
+NumericMatrix cavi_update_tau(NumericMatrix y, NumericMatrix x, 
+                              NumericVector m_t, NumericVector m_c,
+                              NumericMatrix m_alpha, NumericMatrix m_beta,
+                              NumericVector m_mu, double a, double b) {
   
+  /***
+   * Here we return a G-by-2 matrix, where the first column is the value of
+   * a_tau and the second b_tau
+   */
+  
+  int N = y.nrow();
+  int G = y.ncol();
+  
+  NumericMatrix alpha_sum = calculate_greek_sum(m_alpha, x);
+  NumericMatrix beta_sum = calculate_greek_sum(m_beta, x);
+  
+  NumericMatrix tau_update(G, 2);
+  
+  for(int g = 0; g < G; g++)
+    tau_update(g,0) = a + N / 2.0;
+  
+  for(int g = 0; g < G; g++) {
+    double tmp = 0.0;
+    for(int i = 0; i < N; i++) {
+      tmp += y(i,g) - m_mu[g] - alpha_sum(g, i) - m_t[i] * (m_c[g] + beta_sum(g,i)); 
+    }
+
+    tau_update(g,1) = b + 0.5 * tmp;
+  }
+  
+  return tau_update;
+}
   
   
   

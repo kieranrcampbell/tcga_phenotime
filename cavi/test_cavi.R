@@ -40,6 +40,7 @@ q <- rep(0, N)
 tau_q <- 1
 tau_mu <- 1
 tau_c <- 1
+a <- 2; b <- 1
 
 
 # Check m_t and s_t -------------------------------------------------------
@@ -107,3 +108,22 @@ cuc <- cavi_update_c(y, x, m_t, s_t, m_alpha, m_beta, a_tau, b_tau,
 cuc2 <- cbind(m_c, s_c); colnames(cuc2) <- NULL
 
 expect_equivalent(cuc, cuc2)
+
+# Check a_tau and b_tau ---------------------------------------------------
+
+a_tau <- rep(a + N / 2, G)
+
+b_tau <- sapply(1:G, function(g) {
+  b + 0.5 * sum(y[,g] - m_mu[g] - alpha_sum[g,] - m_t * (m_c[g] + beta_sum[g,]))
+})
+
+cut <- cavi_update_tau(y, x, m_t, m_c, m_alpha, m_beta, m_mu, a, b)
+cut2 <- cbind(a_tau, b_tau)
+
+expect_equivalent(cut, cut2)
+
+
+
+
+
+
