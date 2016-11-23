@@ -41,6 +41,7 @@ tau_q <- 1
 tau_mu <- 1
 tau_c <- 1
 a <- 2; b <- 1
+tau_alpha <- 1
 
 
 # Check m_t and s_t -------------------------------------------------------
@@ -122,8 +123,26 @@ cut2 <- cbind(a_tau, b_tau)
 
 expect_equivalent(cut, cut2)
 
+ab_tau <- a_tau / b_tau
 
 
 
+# Check m_alpha and s_alpha -----------------------------------------------
+
+p <- g <- 1
+
+s_alpha_pg <- 1 / (ab_tau[g] * sum(x[,p]^2) + tau_alpha)
+
+alpha_sum_without_p <- t(m_alpha[-p,]) %*% t(x[,-p])
+
+m_alpha_pg <- ab_tau[g] * sum(
+  y[,g] - m_mu[g] - m_t * (m_c[g] + beta_sum[g,]) - alpha_sum_without_p[g,]
+) * s_alpha_pg
+
+## C++ indexing!
+cua <- cavi_update_alpha(p-1, g-1, y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau,
+                         m_mu, tau_alpha)
+cua2 <- c(m_alpha_pg, s_alpha_pg)
+expect_equivalent(cua, cua2)
 
 

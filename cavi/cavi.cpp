@@ -195,6 +195,54 @@ NumericMatrix cavi_update_tau(NumericMatrix y, NumericMatrix x,
   
   return tau_update;
 }
+
+// [[Rcpp::export]]
+NumericVector cavi_update_alpha(int p, int g, NumericMatrix y, NumericMatrix x, 
+                                NumericVector m_t, NumericVector m_c,
+                                NumericMatrix m_alpha, NumericMatrix m_beta,
+                                NumericVector a_tau, NumericVector b_tau,
+                                NumericVector m_mu, double tau_alpha) {
+  /**
+   * For alpha, beta and chi we update slightly differently - only for a given variable,
+   * indexed by p and g
+   */
+  
+  int N = y.nrow();
+  int P = x.ncol();
+  
+  NumericMatrix beta_sum = calculate_greek_sum(m_beta, x);
+  
+  double s_alpha_pg = tau_alpha;
+  for(int i = 0; i < N; i++)
+    s_alpha_pg += a_tau[g] / b_tau[g] * pow(x(i,p), 2);
+  s_alpha_pg = 1 / s_alpha_pg;
+
+  // need to calculate alpha sum without the p'th entry
+  NumericVector alpha_sum_no_p(N, 0.0);
+  for(int i = 0; i < N; i++) {
+    for(int pp = 0; pp < P; pp++) {
+      if(pp != p)
+        alpha_sum_no_p[i] += m_alpha(pp,g) * x(i,pp);
+    }
+  }
+  
+  double m_alpha_pg = 0;
+  for(int i = 0; i < N; i++) {
+    m_alpha_pg += y(i,g) - m_mu[g] - m_t[i] * (m_c[g] + beta_sum(g,i)) - alpha_sum_no_p[i];
+  }
+  m_alpha_pg *= a_tau[g] / b_tau[g];
+  
+  return NumericVector::create(m_alpha_pg * s_alpha_pg, s_alpha_pg);
+}
+  
+  
+  
+
+  
+  
+  
+  
+  
   
   
   
