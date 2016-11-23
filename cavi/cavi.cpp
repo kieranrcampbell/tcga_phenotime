@@ -284,6 +284,16 @@ NumericVector cavi_update_beta(int p, int g, NumericMatrix y, NumericMatrix x,
   
 }
 
+
+// [[Rcpp::export]]
+NumericVector cavi_update_chi(double m_beta_pg, double s_beta_pg,
+                              double a_beta, double b_beta) {
+  double a_new = a_beta + 0.5;
+  double b_new = b_beta + 0.5 * (pow(m_beta_pg, 2) + s_beta_pg);
+  
+  return NumericVector::create(a_new, b_new);
+}
+                              
   
   
   
