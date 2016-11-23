@@ -24,6 +24,9 @@ m_beta <- matrix(rnorm(P * G), nrow = P)
 s_alpha <- matrix(rgamma(P * G, 2), nrow = P)
 s_beta <- matrix(rgamma(P * G, 2), nrow = P)
 
+a_chi <- matrix(rgamma(P * G, 2), nrow = P)
+b_chi <- matrix(rgamma(P * G, 2), nrow = P)
+
 alpha_sum <- t(m_alpha) %*% t(x)
 beta_sum <- t(m_beta) %*% t(x)
 
@@ -144,5 +147,25 @@ cua <- cavi_update_alpha(p-1, g-1, y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau
                          m_mu, tau_alpha)
 cua2 <- c(m_alpha_pg, s_alpha_pg)
 expect_equivalent(cua, cua2)
+
+
+# Check m_beta and s_beta -------------------------------------------------
+ms_vec <- m_t^2 + s_t
+s_beta_pg <- 1 / (a_chi[p,g] / b_chi[p,g] + a_tau[g] / b_tau[g] * sum(ms_vec * x[,p]^2))
+
+beta_sum_without_p <- t(m_beta[-p,]) %*% t(x[,-p])
+
+m_beta_pg <- a_tau[g] / b_tau[g] * sum(
+  m_t * x[,p] * (
+    y[,g] - m_mu[g] - ms_vec / m_t * m_c[g] - alpha_sum[g,] -
+      ms_vec / m_t * beta_sum_without_p[g,]
+  )
+) * s_beta_pg
+
+
+cub <- cavi_update_beta(p-1, g-1, y, x, m_t, s_t, m_c, m_alpha, m_beta, a_tau, 
+                        b_tau, a_chi, b_chi, m_mu)
+
+expect_equivalent(c(m_beta_pg, s_beta_pg), cub)
 
 

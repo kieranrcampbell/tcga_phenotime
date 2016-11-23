@@ -234,9 +234,55 @@ NumericVector cavi_update_alpha(int p, int g, NumericMatrix y, NumericMatrix x,
   
   return NumericVector::create(m_alpha_pg * s_alpha_pg, s_alpha_pg);
 }
+
+
+// [[Rcpp::export]]
+NumericVector cavi_update_beta(int p, int g, NumericMatrix y, NumericMatrix x, 
+                                NumericVector m_t, NumericVector s_t, NumericVector m_c,
+                                NumericMatrix m_alpha, NumericMatrix m_beta,
+                                NumericVector a_tau, NumericVector b_tau,
+                                NumericMatrix a_chi, NumericMatrix b_chi,
+                                NumericVector m_mu) {
+
+  int N = y.nrow();
+  int P = x.ncol();
   
+  NumericMatrix alpha_sum = calculate_greek_sum(m_alpha, x);
   
+  /** 
+   * We start by calculating some useful quantities
+   */
+  NumericVector ms_vec(N);
+  for(int i = 0; i < N; i++)
+    ms_vec[i] = pow(m_t[i], 2) + s_t[i];
   
+  NumericVector beta_sum_no_p(N, 0.0);
+  for(int i = 0; i < N; i++) {
+    for(int pp = 0; pp < P; pp++) {
+      if(pp != p)
+        beta_sum_no_p[i] += m_beta(pp,g) * x(i,pp);
+    }
+  }
+  
+  // Calculate s_beta_pg
+  double s_beta_pg = a_chi(p,g) / b_chi(p,g);
+  for(int i = 0; i < N; i++) {
+    s_beta_pg += a_tau[g] / b_tau[g] * ms_vec[i] * pow(x(i,p), 2);
+  }
+  s_beta_pg = 1 / s_beta_pg;
+  
+  double m_beta_pg = 0.0;
+  
+  for(int i = 0; i < N; i++) {
+    m_beta_pg += m_t[i] * x(i,p) * ( 
+      y(i,g) - m_mu[g] - ms_vec[i] / m_t[i] * m_c[g] - alpha_sum(g,i) - 
+        ms_vec[i] / m_t[i] * beta_sum_no_p[i]
+    );
+  }
+  m_beta_pg *= a_tau[g] / b_tau[g] * s_beta_pg;
+  return NumericVector::create(m_beta_pg, s_beta_pg);
+  
+}
 
   
   
