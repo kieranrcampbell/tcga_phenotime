@@ -34,8 +34,12 @@ ab_tau <- a_tau / b_tau
 m_mu <- rnorm(G)
 m_c <- rnorm(G)
 s_c <- rgamma(G, 2)
-q <- rep(0, G)
+q <- rep(0, N)
 tau_q <- 1
+tau_mu <- 1
+
+
+# Check m_t and s_t -------------------------------------------------------
 
 s_t_i <- sapply(1:N, function(i) {
   tmp <- m_c^2 + s_c + 2 * m_c * beta_sum[,i]
@@ -50,5 +54,34 @@ s_t_i <- sapply(1:N, function(i) {
   return (1 / (sum(ab_tau * tmp) + tau_q))
 })
 
+m_t_i <- sapply(1:N, function(i) {
+  tmp <- (m_c + beta_sum[,i]) * (y[i,] - m_mu - alpha_sum[,i])
+  return( sum(ab_tau * tmp) + q[i] * tau_q)
+})
+
+m_t_i <- m_t_i * s_t_i
+
 cup <- cavi_update_pst(y, x, m_c, m_mu, s_c, m_alpha, m_beta, s_beta, a_tau, b_tau, q, tau_q)
 cup
+cup2 <- cbind(m_t_i, s_t_i); colnames(cup2) <- NULL
+
+expect_equivalent(cup, cup2)
+
+m_t <- cup[,1]; s_t <- cup[,2]
+
+
+# Check m_mu and s_mu -----------------------------------------------------
+
+s_mu <- 1 / (ab_tau * N + tau_mu)
+
+m_mu <- sapply(seq_len(G), function(g) {
+  ab_tau[g] * sum(y[,g] - alpha_sum[g,] - m_t * (m_c[g] + beta_sum[g,]))
+})
+
+m_mu <- m_mu * s_mu
+
+mum <- cavi_update_mu(y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau, tau_mu)
+mum2 <- cbind(m_mu, s_mu); colnames(mum2) <- NULL
+
+expect_equivalent(mum, mum2)
+

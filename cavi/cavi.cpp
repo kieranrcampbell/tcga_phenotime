@@ -62,7 +62,7 @@ NumericMatrix cavi_update_pst(NumericMatrix y, NumericMatrix x,
     // Calculate numerator
     for(int g = 0; g < G; g++) {
       pst_update(i, 0) += a_tau[g] / b_tau[g] * (
-        m_c[g] * beta_sum(g,i)
+        m_c[g] + beta_sum(g,i)
       ) * (y(i,g) - m_mu[g] - alpha_sum(g,i));
     }
     
@@ -86,7 +86,48 @@ NumericMatrix cavi_update_pst(NumericMatrix y, NumericMatrix x,
   return pst_update;
 }
 
+// [[Rcpp::export]]
+NumericMatrix cavi_update_mu(NumericMatrix y, NumericMatrix x, 
+                             NumericVector m_t, NumericVector m_c,
+                             NumericMatrix m_alpha, NumericMatrix m_beta, 
+                             NumericVector a_tau, NumericVector b_tau,
+                             double tau_mu) {
+  
+  int N = y.nrow();
+  int G = y.ncol(); 
+  NumericMatrix alpha_sum = calculate_greek_sum(m_alpha, x);
+  NumericMatrix beta_sum = calculate_greek_sum(m_beta, x);
+  
+  NumericMatrix mu_update(G, 2);
+  fill(mu_update.begin(), mu_update.end(), 0.0);
+  
+  // update s_mu
+  for(int g = 0; g < G; g++)
+    mu_update(g, 1) = a_tau[g] / b_tau[g] * N + tau_mu;
+  
+  // update m_mu
+  for(int g = 0; g < G; g++) {
+    for(int i = 0; i < N; i++) {
+      mu_update(g, 0) += y(i,g) - alpha_sum(g,i) - m_t[i] * (m_c[g] + beta_sum(g,i));
+    }
+    mu_update(g, 0) *= a_tau[g] / b_tau[g];
+    
+    mu_update(g, 0) /= mu_update(g, 1);
+    mu_update(g, 1) = 1 / mu_update(g, 1);
+  }
+
+  
+  return(mu_update);
+}
 
 
 
-
+  
+  
+  
+  
+  
+  
+  
+  
+  
