@@ -1,6 +1,8 @@
 library(Rcpp)
 library(testthat)
 
+setwd("~/oxford/cancer/tcga_phenotime/cavi")
+
 sourceCpp("cavi.cpp")
 
 
@@ -37,6 +39,7 @@ s_c <- rgamma(G, 2)
 q <- rep(0, N)
 tau_q <- 1
 tau_mu <- 1
+tau_c <- 1
 
 
 # Check m_t and s_t -------------------------------------------------------
@@ -85,3 +88,22 @@ mum2 <- cbind(m_mu, s_mu); colnames(mum2) <- NULL
 
 expect_equivalent(mum, mum2)
 
+
+# Check m_c and s_c -------------------------------------------------------
+
+m_s_s <- m_t^2 + s_t
+s_c = 1 / (ab_tau * sum(m_s_s) + tau_c)
+
+m_c <- sapply(1:G, function(g) {
+  tmp <- m_t * (y[,g] - m_mu[g] - alpha_sum[g,] -
+                  m_s_s / m_t * (beta_sum[g,]))
+  return(ab_tau[g] * sum(tmp))
+})
+m_c <- m_c * s_c
+
+cuc <- cavi_update_c(y, x, m_t, s_t, m_alpha, m_beta, a_tau, b_tau,
+                     m_mu, tau_c)
+
+cuc2 <- cbind(m_c, s_c); colnames(cuc2) <- NULL
+
+expect_equivalent(cuc, cuc2)

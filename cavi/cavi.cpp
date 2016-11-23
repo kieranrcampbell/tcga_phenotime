@@ -121,9 +121,46 @@ NumericMatrix cavi_update_mu(NumericMatrix y, NumericMatrix x,
 }
 
 
+// [[Rcpp::export]]
+NumericMatrix cavi_update_c(NumericMatrix y, NumericMatrix x, 
+                            NumericVector m_t, NumericVector s_t,
+                            NumericMatrix m_alpha, NumericMatrix m_beta, 
+                            NumericVector a_tau, NumericVector b_tau,
+                            NumericVector m_mu, double tau_c) {
+  
+  int N = y.nrow();
+  int G = y.ncol();
+  
+  NumericMatrix alpha_sum = calculate_greek_sum(m_alpha, x);
+  NumericMatrix beta_sum = calculate_greek_sum(m_beta, x);
+  // 
+  NumericMatrix c_update(G, 2);
+  fill(c_update.begin(), c_update.end(), 0.0);
+  
+  // calculate s_c 
+  NumericVector m_s_square(N);
+  double m_s_square_sum = 0.0;
+  for(int i = 0; i < N; i++) {
+    m_s_square[i] = pow(m_t[i], 2) + s_t[i];
+    m_s_square_sum += m_s_square[i];
+  }
+
+  for(int g = 0; g < G; g++)
+    c_update(g, 1) = 1 / (a_tau[g] / b_tau[g] * m_s_square_sum + tau_c);
 
   
+  for(int g = 0; g < G; g++) {
+    for(int i = 0; i < N; i++) {
+      c_update(g, 0) += m_t[i] * (y(i,g)
+      - m_mu[g] - alpha_sum(g,i) -
+      m_s_square[i] / m_t[i] * beta_sum(g, i));
+    }
+    c_update(g, 0) *= a_tau[g] / b_tau[g];
+    c_update(g, 0) *= c_update(g, 1);
+  }
   
+  return c_update;  
+}
   
   
   
