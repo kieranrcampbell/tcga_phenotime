@@ -45,6 +45,7 @@ tau_mu <- 1
 tau_c <- 1
 a <- 2; b <- 1
 tau_alpha <- 1
+a_beta <- 2; b_beta <- 1
 
 
 # Check m_t and s_t -------------------------------------------------------
@@ -167,5 +168,15 @@ cub <- cavi_update_beta(p-1, g-1, y, x, m_t, s_t, m_c, m_alpha, m_beta, a_tau,
                         b_tau, a_chi, b_chi, m_mu)
 
 expect_equivalent(c(m_beta_pg, s_beta_pg), cub)
+
+
+
+# Check a_chi and b_chi ---------------------------------------------------
+
+a_new <- a_beta + 0.5
+
+cuch <- cavi_update_chi(m_beta_pg, s_beta_pg, a_beta, b_beta)
+
+
 
 
