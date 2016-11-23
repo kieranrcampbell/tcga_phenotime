@@ -30,8 +30,9 @@ NumericMatrix calculate_greek_sum(NumericMatrix greek, NumericMatrix x) {
 // [[Rcpp::export]]
 NumericMatrix cavi_update_pst(NumericMatrix y, NumericMatrix x, 
                                     NumericVector m_c, NumericVector m_mu,
-                                    NumericMatrix m_alpha, NumericMatrix m_beta,
-                                    NumericVector alpha_tau, NumericVector beta_tau,
+                                    NumericVector s_c, NumericMatrix m_alpha, 
+                                    NumericMatrix m_beta, NumericMatrix s_beta,
+                                    NumericVector a_tau, NumericVector b_tau,
                                     NumericVector q, double tau_q) {
   /***
    * This function returns an N-by-2 matrix where the entry in the 
@@ -40,6 +41,7 @@ NumericMatrix cavi_update_pst(NumericMatrix y, NumericMatrix x,
   
   int N = y.nrow();
   int G = y.ncol();
+  int P = x.ncol();
 
   NumericMatrix pst_update(N, 2);
   
@@ -57,11 +59,24 @@ NumericMatrix cavi_update_pst(NumericMatrix y, NumericMatrix x,
     pst_update(i, 0) = tau_q * q[i];
     pst_update(i, 1) = tau_q;
     
+    // Calculate numerator
     for(int g = 0; g < G; g++) {
-      pst_update(i, 0) += alpha_tau[g] / beta_tau[g] * (
+      pst_update(i, 0) += a_tau[g] / b_tau[g] * (
         m_c[g] * beta_sum(g,i)
       ) * (y(i,g) - m_mu[g] - alpha_sum(g,i));
-      pst_update(i, 1) += alpha_tau[g] / beta_tau[g] * (m_c[g] + beta_sum(g,i));
+    }
+    
+    // Calculate denominator
+    for(int g = 0; g < G; g++) {
+      double s_tmp = pow(m_c[g], 2.0) + s_c[g];
+      s_tmp += 2 * m_c[g] * beta_sum(g,i);
+      for(int p = 0; p < P; p++) {
+        s_tmp += (pow(m_beta(p,g), 2) + s_beta(p,g)) * x(i,p);
+        for(int pp = 0; pp < P; pp++)
+          if(p != pp)
+            s_tmp += m_beta(p, g) * m_beta(pp, g) * x(i, p) * x(i, pp);
+      }
+      pst_update(i, 1) += a_tau[g] / b_tau[g] * s_tmp;
     }
     
     pst_update(i, 0) /= pst_update(i, 1);
