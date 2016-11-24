@@ -46,7 +46,7 @@ NumericMatrix greek_square_exp(NumericMatrix m_g, NumericMatrix s_g, NumericMatr
         sqe(g, i) += (m_g(p,g) * m_g(p,g) + s_g(p,g)) * x(i,p) * x(i,p);
         for(int pp = 0; pp < P; pp++) 
           if(pp != p)
-            seq(g, i) += m_g(p,g) * m_g(pp,g) * x(i,p) * x(i,pp);
+            sqe(g, i) += m_g(p,g) * m_g(pp,g) * x(i,p) * x(i,pp);
       }
     }
   }

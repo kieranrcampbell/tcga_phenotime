@@ -28,7 +28,7 @@ Generate data:
 
 ```{r generate-data}
 G <- 20
-P <- 1
+P <- 2
 N <- 100
 
 # Hyperpars
