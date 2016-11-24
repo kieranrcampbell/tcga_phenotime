@@ -151,9 +151,9 @@ NumericMatrix cavi_update_c(NumericMatrix y, NumericMatrix x,
   
   for(int g = 0; g < G; g++) {
     for(int i = 0; i < N; i++) {
-      c_update(g, 0) += m_t[i] * (y(i,g)
-      - m_mu[g] - alpha_sum(g,i) -
-      m_s_square[i] / m_t[i] * beta_sum(g, i));
+      c_update(g, 0) += (m_t[i] * y(i,g)
+      - m_t[i] * m_mu[g] - m_t[i] * alpha_sum(g,i) -
+      m_s_square[i] * beta_sum(g, i));
     }
     c_update(g, 0) *= a_tau[g] / b_tau[g];
     c_update(g, 0) *= c_update(g, 1);
@@ -274,9 +274,9 @@ NumericVector cavi_update_beta(int p, int g, NumericMatrix y, NumericMatrix x,
   double m_beta_pg = 0.0;
   
   for(int i = 0; i < N; i++) {
-    m_beta_pg += m_t[i] * x(i,p) * ( 
-      y(i,g) - m_mu[g] - ms_vec[i] / m_t[i] * m_c[g] - alpha_sum(g,i) - 
-        ms_vec[i] / m_t[i] * beta_sum_no_p[i]
+    m_beta_pg += x(i,p) * ( 
+      m_t[i] * y(i,g) - m_t[i] * m_mu[g] - ms_vec[i] * m_c[g] - m_t[i] * alpha_sum(g,i) - 
+        ms_vec[i] * beta_sum_no_p[i]
     );
   }
   m_beta_pg *= a_tau[g] / b_tau[g] * s_beta_pg;

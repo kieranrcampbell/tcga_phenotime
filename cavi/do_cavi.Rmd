@@ -1,0 +1,139 @@
+---
+  title: "Testing CAVI"
+author: "Kieran Campbell"
+date: '2016-11-24'
+output:
+  html_document:
+  highlight: tango
+number_sections: yes
+toc: yes
+pdf_document:
+  toc: yes
+---
+  
+```{r setup, include=FALSE}
+
+library(Rcpp)
+library(testthat)
+library(tidyverse)
+
+setwd("~/oxford/cancer/tcga_phenotime/cavi")
+
+sourceCpp("cavi.cpp")
+
+set.seed(123)
+```
+
+Generate data:
+
+```{r generate-data}
+G <- 20
+P <- 1
+N <- 100
+
+# Hyperpars
+tau_q <- 1
+tau_mu <- 1
+tau_c <- 1
+a <- 2; b <- 1
+tau_alpha <- 1
+a_beta <- 6; b_beta <- 0.1
+a_tau <- 2; b_tau <- 0.5
+
+pst <- rnorm(N, 0, 1 / sqrt(tau_q))
+c <- rnorm(G, 0, 1 / sqrt(tau_c))
+
+chi <- matrix(rgamma(P * G, a_beta, b_beta), nrow = P)
+
+beta <- t(apply(chi, 1, function(ch) rnorm(G, 0, 1 / sqrt(ch))))
+
+tau <- rgamma(G, a_tau, b_tau)
+
+x <- scale(matrix(sample(0:1, size = N * P, replace = TRUE), nrow = N))
+
+beta_sum <- t(beta) %*% t(x)
+
+y <- matrix(NA, nrow = N, ncol = G)
+
+for(i in 1:N) {
+  for(g in 1:G) {
+    y[i,g] <- pst[i] * (c[g] + beta_sum[g,i]) + rnorm(1, 0, 1 / sqrt(tau[g]))
+  }
+}
+```
+
+Have a quick look on PCA:
+
+```{r pca-data}
+df <- data_frame(pc1 = prcomp(y)$x[,1], x = x[,1], pst = pst)
+
+ggplot(df, aes(x = pc1, y = pst, color = as.factor(x))) + geom_point()
+```
+
+Initial values for CAVI:
+
+```{r initial-cavi-values}
+set.seed(123L)
+a_tau <- rgamma(G, 2)
+b_tau <- rgamma(G, 2)
+ab_tau <- a_tau / b_tau
+m_mu <- rnorm(G)
+s_c <- rgamma(G, 2)
+m_alpha <- matrix(rnorm(P * G), nrow = P)
+m_beta <- matrix(rnorm(P * G), nrow = P)
+s_alpha <- matrix(rgamma(P * G, 2), nrow = P)
+s_beta <- matrix(rgamma(P * G, 2), nrow = P)
+
+a_chi <- matrix(rgamma(P * G, 2), nrow = P)
+b_chi <- matrix(rgamma(P * G, 2), nrow = P)
+
+m_t <- prcomp(scale(y))$x[,1]
+m_c <- apply(y, 2, function(yy) coef(lm(yy ~ m_t))[2])
+
+mt1 <- NULL
+
+niter <- 100
+
+for(i in 1:niter) {
+
+  
+  cumu <- cavi_update_mu(y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau, tau_mu)
+  m_mu <- cumu[,1]; s_mu <- cumu[,2]
+  
+  cuc <- cavi_update_c(y, x, m_t, s_t, m_alpha, m_beta, a_tau, b_tau,
+                       m_mu, tau_c)
+  m_c <- cuc[,1]; s_c <- cuc[,2]
+  
+  cut <- cavi_update_tau(y, x, m_t, m_c, m_alpha, m_beta, m_mu, a, b)
+  a_tau <- cut[,1]; b_tau <- cut[,2]
+  
+  for(g in 1:G) {
+    for(p in 1:P) {
+      cua <- cavi_update_alpha(p-1, g-1, y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau,
+                               m_mu, tau_alpha)
+      m_alpha[p,g] <- cua[1]; s_alpha[p,g] <- cua[2]
+      
+      cub <- cavi_update_beta(p-1, g-1, y, x, m_t, s_t, m_c, m_alpha, m_beta, a_tau, 
+                              b_tau, a_chi, b_chi, m_mu)
+      m_beta[p,g] <- cub[1]; s_beta[p,g] <- cub[2]
+      
+      cuch <- cavi_update_chi(m_beta[p,g], s_beta[p,g], a_beta, b_beta)
+      a_chi[p,g] <- cuch[1]; b_chi[p,g] <- cuch[2]
+    }
+  }
+  
+  cup <- cavi_update_pst(y, x, m_c, m_mu, s_c, m_alpha, m_beta, s_beta, a_tau, b_tau, q, tau_q)
+  m_t <- cup[,1]; s_t <- cup[,2]
+  mt1 <- c(mt1, m_t[1])
+  
+}
+```
+
+Plot results:
+
+```{r plot-results}
+plot(m_t, pst)
+```
+
+
+

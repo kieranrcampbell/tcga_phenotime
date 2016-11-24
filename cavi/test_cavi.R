@@ -12,9 +12,9 @@ expect_equal(calculate_greek_sum(matrix(0), matrix(0)), matrix(0))
 expect_equal(sum(calculate_greek_sum(matrix(c(0, 1, 0), nrow = 1), matrix(c(0, 3, 0), nrow = 3))), 3)
 
 
-G <- 2
-P <- 1
-N <- 5
+G <- 5
+P <- 3
+N <- 10
 
 y <- matrix(rnorm(N * G), nrow = N, ncol = G)
 x <- matrix(sample(0:1, size = N * P, replace = TRUE), nrow = N)
@@ -137,7 +137,7 @@ p <- g <- 1
 
 s_alpha_pg <- 1 / (ab_tau[g] * sum(x[,p]^2) + tau_alpha)
 
-alpha_sum_without_p <- t(m_alpha[-p,]) %*% t(x[,-p])
+alpha_sum_without_p <- t(m_alpha[-p,,drop=FALSE]) %*% t(x[,-p,drop=FALSE])
 
 m_alpha_pg <- ab_tau[g] * sum(
   y[,g] - m_mu[g] - m_t * (m_c[g] + beta_sum[g,]) - alpha_sum_without_p[g,]
@@ -154,7 +154,7 @@ expect_equivalent(cua, cua2)
 ms_vec <- m_t^2 + s_t
 s_beta_pg <- 1 / (a_chi[p,g] / b_chi[p,g] + a_tau[g] / b_tau[g] * sum(ms_vec * x[,p]^2))
 
-beta_sum_without_p <- t(m_beta[-p,]) %*% t(x[,-p])
+beta_sum_without_p <- t(m_beta[-p,,drop=FALSE]) %*% t(x[,-p,drop=FALSE])
 
 m_beta_pg <- a_tau[g] / b_tau[g] * sum(
   m_t * x[,p] * (
@@ -174,9 +174,11 @@ expect_equivalent(c(m_beta_pg, s_beta_pg), cub)
 # Check a_chi and b_chi ---------------------------------------------------
 
 a_new <- a_beta + 0.5
+b_new <- b_beta + 0.5 * (m_beta_pg^2 + s_beta_pg)
 
 cuch <- cavi_update_chi(m_beta_pg, s_beta_pg, a_beta, b_beta)
 
+expect_equivalent(cuch, c(a_new, b_new))
 
 
 
