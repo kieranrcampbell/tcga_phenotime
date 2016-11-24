@@ -28,6 +28,32 @@ NumericMatrix calculate_greek_sum(NumericMatrix greek, NumericMatrix x) {
 }
 
 // [[Rcpp::export]]
+NumericMatrix greek_square_exp(NumericMatrix m_g, NumericMatrix s_g, NumericMatrix x) {
+  /**
+   * this calculates E[(\sum_p greek_{pg} x_{ip})^2] = 
+   * \sum_p (m_g_pg^2 + s_g_pg^2) x_ip^2 + \sum_{p,p':p\neqp'} m_g_pg m_g_p'g x_ip x_ip'
+   */
+  int P = m_g.nrow();
+  int G = m_g.ncol();
+  int N = x.nrow();
+  
+  NumericMatrix sqe(G, N);
+  fill(sqe.begin(), sqe.end(), 0.0);
+  
+  for(int g = 0; g < G; g++) {
+    for(int i = 0; i < N; i++) {
+      for(int p = 0; p < P; p++) {
+        sqe(g, i) += (m_g(p,g) * m_g(p,g) + s_g(p,g)) * x(i,p) * x(i,p);
+        for(int pp = 0; pp < P; pp++) 
+          if(pp != p)
+            seq(g, i) += m_g(p,g) * m_g(pp,g) * x(i,p) * x(i,pp);
+      }
+    }
+  }
+  return sqe;
+}
+
+// [[Rcpp::export]]
 NumericMatrix cavi_update_pst(NumericMatrix y, NumericMatrix x, 
                                     NumericVector m_c, NumericVector m_mu,
                                     NumericVector s_c, NumericMatrix m_alpha, 
@@ -164,9 +190,12 @@ NumericMatrix cavi_update_c(NumericMatrix y, NumericMatrix x,
 
 // [[Rcpp::export]]
 NumericMatrix cavi_update_tau(NumericMatrix y, NumericMatrix x, 
-                              NumericVector m_t, NumericVector m_c,
+                              NumericVector m_t, NumericVector s_t,
+                              NumericVector m_c, NumericVector s_c,
                               NumericMatrix m_alpha, NumericMatrix m_beta,
-                              NumericVector m_mu, double a, double b) {
+                              NumericMatrix s_alpha, NumericMatrix s_beta,
+                              NumericVector m_mu, NumericVector s_mu,
+                              double a, double b) {
   
   /***
    * Here we return a G-by-2 matrix, where the first column is the value of
@@ -179,18 +208,28 @@ NumericMatrix cavi_update_tau(NumericMatrix y, NumericMatrix x,
   NumericMatrix alpha_sum = calculate_greek_sum(m_alpha, x);
   NumericMatrix beta_sum = calculate_greek_sum(m_beta, x);
   
+  NumericMatrix alpha_square_sum = greek_square_exp(m_alpha, s_alpha, x);
+  NumericMatrix beta_square_sum = greek_square_exp(m_beta, s_beta, x);
+  
   NumericMatrix tau_update(G, 2);
   
   for(int g = 0; g < G; g++)
     tau_update(g,0) = a + N / 2.0;
   
   for(int g = 0; g < G; g++) {
-    double tmp = 0.0;
+    double fg = 0.0;
     for(int i = 0; i < N; i++) {
-      tmp += y(i,g) - m_mu[g] - alpha_sum(g, i) - m_t[i] * (m_c[g] + beta_sum(g,i)); 
-    }
+      fg += y(i,g) * y(i,g) + m_mu[g] * m_mu[g] + s_mu[g] + 
+        (m_t[i] * m_t[i] + s_t[i]) * (m_c[g] * m_c[g] + s_c[g]);
+      fg += alpha_square_sum(g,i) + (m_t[i] * m_t[i] + s_t[i]) * beta_square_sum(g,i);
+      fg -= 2 * y(i,g) * (m_mu[g] + alpha_sum(g,i) + m_t[i] * (m_c[g] + beta_sum(g,i)));
+      fg += 2 * (m_mu[g] * alpha_sum(g,i) + m_mu[g] * m_t[i] * m_c[g]);
+      fg += 2 * (m_mu[g] * m_t[i] * beta_sum(g,i) + m_t[i] * m_c[g] * alpha_sum(g,i));
+      fg += 2 * (m_t[i] * alpha_sum(g,i) * beta_sum(g,i) + 
+        (m_t[i] * m_t[i] + s_t[i]) * m_c[g]*  beta_sum(g,i)  );
+      }
 
-    tau_update(g,1) = b + 0.5 * tmp;
+    tau_update(g,1) = b + 0.5 * fg;
   }
   
   return tau_update;

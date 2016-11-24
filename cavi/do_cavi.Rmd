@@ -1,5 +1,5 @@
 ---
-  title: "Testing CAVI"
+title: "Testing CAVI"
 author: "Kieran Campbell"
 date: '2016-11-24'
 output:
@@ -39,8 +39,9 @@ a <- 2; b <- 1
 tau_alpha <- 1
 a_beta <- 6; b_beta <- 0.1
 a_tau <- 2; b_tau <- 0.5
+q <- rep(0, N)
 
-pst <- rnorm(N, 0, 1 / sqrt(tau_q))
+pst <- rnorm(N, q, 1 / sqrt(tau_q))
 c <- rnorm(G, 0, 1 / sqrt(tau_c))
 
 chi <- matrix(rgamma(P * G, a_beta, b_beta), nrow = P)
@@ -88,11 +89,14 @@ a_chi <- matrix(rgamma(P * G, 2), nrow = P)
 b_chi <- matrix(rgamma(P * G, 2), nrow = P)
 
 m_t <- prcomp(scale(y))$x[,1]
+s_t <- rep(1, N)
 m_c <- apply(y, 2, function(yy) coef(lm(yy ~ m_t))[2])
 
 mt1 <- NULL
+ct1 <- NULL
+taug1 <- NULL
 
-niter <- 100
+niter <- 1000
 
 for(i in 1:niter) {
 
@@ -103,9 +107,13 @@ for(i in 1:niter) {
   cuc <- cavi_update_c(y, x, m_t, s_t, m_alpha, m_beta, a_tau, b_tau,
                        m_mu, tau_c)
   m_c <- cuc[,1]; s_c <- cuc[,2]
+  ct1 <- c(ct1, m_c[1])
   
-  cut <- cavi_update_tau(y, x, m_t, m_c, m_alpha, m_beta, m_mu, a, b)
+  cut <- cavi_update_tau(y, x, m_t, s_t, m_c, s_c, m_alpha, m_beta, s_alpha, 
+    s_beta, m_mu, s_mu, a, b)
   a_tau <- cut[,1]; b_tau <- cut[,2]
+  
+  taug1 <- c(taug1, a_tau[1] / b_tau[1])
   
   for(g in 1:G) {
     for(p in 1:P) {
@@ -135,5 +143,10 @@ Plot results:
 plot(m_t, pst)
 ```
 
+MT diagnostics:
 
+```{r mt-diag}
+d <- data_frame(iter = 1:niter, mt1, mt1_old) %>% gather(mt, value, -iter)
+ggplot(d, aes(x = iter, y = value, color = mt)) + geom_line()
+```
 
