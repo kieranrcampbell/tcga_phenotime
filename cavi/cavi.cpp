@@ -67,7 +67,7 @@ NumericMatrix cavi_update_pst(NumericMatrix y, NumericMatrix x,
   
   int N = y.nrow();
   int G = y.ncol();
-  int P = x.ncol();
+  //int P = x.ncol();
 
   NumericMatrix pst_update(N, 2);
   
@@ -80,6 +80,8 @@ NumericMatrix cavi_update_pst(NumericMatrix y, NumericMatrix x,
   
   NumericMatrix alpha_sum = calculate_greek_sum(m_alpha, x);
   NumericMatrix beta_sum = calculate_greek_sum(m_beta, x);
+  
+  NumericMatrix beta_sq_exp = greek_square_exp(m_beta, s_beta, x);
   
   for(int i = 0; i < N; i++) {
     pst_update(i, 0) = tau_q * q[i];
@@ -95,13 +97,8 @@ NumericMatrix cavi_update_pst(NumericMatrix y, NumericMatrix x,
     // Calculate denominator
     for(int g = 0; g < G; g++) {
       double s_tmp = pow(m_c[g], 2.0) + s_c[g];
-      s_tmp += 2 * m_c[g] * beta_sum(g,i);
-      for(int p = 0; p < P; p++) {
-        s_tmp += (pow(m_beta(p,g), 2) + s_beta(p,g)) * x(i,p);
-        for(int pp = 0; pp < P; pp++)
-          if(p != pp)
-            s_tmp += m_beta(p, g) * m_beta(pp, g) * x(i, p) * x(i, pp);
-      }
+      s_tmp += 2 * m_c[g] * beta_sum(g,i) + beta_sq_exp(g,i);
+      
       pst_update(i, 1) += a_tau[g] / b_tau[g] * s_tmp;
     }
     
