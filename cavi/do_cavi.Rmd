@@ -27,9 +27,9 @@ set.seed(123)
 Generate data:
 
 ```{r generate-data}
-G <- 20
+G <- 200
 P <- 2
-N <- 100
+N <- 300
 
 # Hyperpars
 tau_q <- 1
@@ -101,11 +101,11 @@ ct1 <- NULL
 taug1 <- NULL
 beta1 <- NULL
 
-niter <- 500
+niter <- 1000
 
 for(i in 1:niter) {
 
-  
+  # print(paste("iteration", i))
   cumu <- cavi_update_mu(y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau, tau_mu)
   m_mu <- cumu[,1]; s_mu <- cumu[,2]
 

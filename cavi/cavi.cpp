@@ -1,5 +1,8 @@
+// [[Rcpp::depends(BH)]]
+
 #include <Rcpp.h>
 #include <cmath>
+#include <boost/math/special_functions/digamma.hpp>
 
 using namespace Rcpp;
 using namespace std;
@@ -329,15 +332,104 @@ NumericVector cavi_update_chi(double m_beta_pg, double s_beta_pg,
   
   return NumericVector::create(a_new, b_new);
 }
-                              
+
+// [[Rcpp::export]]
+double calculate_E_log_Y_given_theta(NumericMatrix y, NumericMatrix x, 
+                                     NumericVector m_t, NumericVector s_t, 
+                                     NumericVector m_c, NumericVector s_c,
+                                     NumericMatrix m_alpha, NumericMatrix s_alpha,
+                                     NumericMatrix m_beta, NumericMatrix s_beta,
+                                     NumericVector a_tau, NumericVector b_tau,
+                                     NumericVector m_mu, NumericVector s_mu) {
+  int N = y.nrow();
+  //int P = x.ncol();
+  int G = y.ncol();
+  
+  double ely = 0.0; // Expectation of log p(Y|\theta)
+  
+  // temporary holders
+  NumericMatrix alpha_sum = calculate_greek_sum(m_alpha, x);
+  NumericMatrix beta_sum = calculate_greek_sum(m_beta, x);
+  NumericMatrix alpha_square_sum = greek_square_exp(m_alpha, s_alpha, x);
+  NumericMatrix beta_square_sum = greek_square_exp(m_beta, s_beta, x);
+  
+  for(int g = 0; g < G; g++) {
+    ely += N / 2 * (boost::math::digamma(a_tau[g]) - log(b_tau[g]));
+    double fg = 0.0;
+    for(int i = 0; i < N; i++) {
+      fg += y(i,g) * y(i,g) + m_mu[g] * m_mu[g] + s_mu[g] + 
+        (m_t[i] * m_t[i] + s_t[i]) * (m_c[g] * m_c[g] + s_c[g]);
+      fg += alpha_square_sum(g,i) + (m_t[i] * m_t[i] + s_t[i]) * beta_square_sum(g,i);
+      fg -= 2 * y(i,g) * (m_mu[g] + alpha_sum(g,i) + m_t[i] * (m_c[g] + beta_sum(g,i)));
+      fg += 2 * (m_mu[g] * alpha_sum(g,i) + m_mu[g] * m_t[i] * m_c[g]);
+      fg += 2 * (m_mu[g] * m_t[i] * beta_sum(g,i) + m_t[i] * m_c[g] * alpha_sum(g,i));
+      fg += 2 * (m_t[i] * alpha_sum(g,i) * beta_sum(g,i) + 
+        (m_t[i] * m_t[i] + s_t[i]) * m_c[g]*  beta_sum(g,i)  );
+    }
+    ely -= a_tau[g] / 2 * b_tau[g] * fg;
+  }
+  return ely;
+}
+
+// [[Rcpp::export]]
+double calculate_E_log_theta(NumericVector m_t, NumericVector s_t, 
+                             NumericVector m_c, NumericVector s_c,
+                             NumericMatrix m_alpha, NumericMatrix s_alpha,
+                             NumericMatrix m_beta, NumericMatrix s_beta,
+                             NumericVector a_tau, NumericVector b_tau,
+                             NumericVector m_mu, NumericVector s_mu,
+                             NumericMatrix a_chi, NumericMatrix b_chi,
+                             NumericVector q, double tau_q, double tau_mu, double tau_c,
+                             double a, double b, double tau_alpha,
+                             double a_beta, double b_beta) {
+  int N = m_t.size();
+  int G = m_c.size();
+  int P = a_chi.nrow();
+  
+  double elp = 0.0;
+  
+  for(int i = 0; i < N; i++)
+    elp -= tau_q / 2 * (m_t[i] * m_t[i] + s_t[i] - 2 * m_t[i] * q[i]);
+  
+  for(int g = 0; g < G; g++) {
+    elp -= tau_mu / 2 * (m_mu[g] * m_mu[g] + s_mu[g]) - 
+      tau_c / 2 * (m_c[g] * m_c[g] + s_c[g]);
+    elp += (a - 1) * (boost::math::digamma(a_tau[g]) - log(b_tau[g])) -
+      a_tau[g] / b_tau[g] * b;
+    for(int p = 0; p < P; p++) {
+      elp -= tau_alpha / 2 * (m_alpha(p,g) * m_alpha(p,g) + s_alpha(p,g)) -
+        a_chi(p,g) / (2 * b_chi(p,g)) * (m_beta(p,g) * m_beta(p,g) + s_beta(p,g));
+      elp += (a_beta - 1) * (boost::math::digamma(a_chi(p,g)) - log(b_chi(p,g))) -
+        a_chi(p,g) / b_chi(p,g) * b_beta;
+    }
+  }
+  
+  return elp;
+}
+
+// [[Rcpp::export]]
+double calculate_elbo(NumericMatrix y, NumericMatrix x, 
+                      NumericVector m_t, NumericVector s_t, NumericVector m_c,
+                      NumericMatrix m_alpha, NumericMatrix m_beta,
+                      NumericVector a_tau, NumericVector b_tau,
+                      NumericMatrix a_chi, NumericMatrix b_chi,
+                      NumericVector m_mu) {
+  double elbo = 0.0;
   
   
   
-  
-  
-  
-  
-  
-  
+  return elbo;
+}
+
+
+
+
+
+
+
+
+
+
+
   
   

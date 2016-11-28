@@ -370,4 +370,82 @@ y[, dplyr::filter(df, beta_2_sig) %>% extract2("feature")] %>%
   stat_smooth(se = FALSE, method = "lm", size = 2)
 ```
 
+Foxp3 plot:
+
+
+
+```{r tregs, fix.width = 9, fig.height = 3}
+sc_tumour$phenotime <- tmap
+
+# ensembl ids for FOXP3, CD4 and CD25
+treg_ids <- c("ENSG00000049768", "ENSG00000010610", "ENSG00000134460")
+treg_inds <- unlist(sapply(treg_ids, function(tr_id) grep(tr_id, fData(sc_tumour)$ensembl_gene_id)))
+sc_treg <- sc_tumour[treg_inds, ]
+sc_treg <- sc_treg[fData(sc_treg)$gene_type == "protein_coding", ]
+
+sc_treg <- summariseExprsAcrossFeatures(sc_treg, summarise_by = "ensembl_gene_id")
+fData(sc_treg)$ensembl_gene_id <- sapply(strsplit(featureNames(sc_treg), ".", fixed = TRUE), `[`, 1)
+
+
+treg_expr <- as_data_frame(t(exprs(sc_treg)))
+names(treg_expr) <- c("CD4", "FOXP3", "CD25")
+treg_tidy <- treg_expr %>% 
+  mutate(phenotime = sc_treg$phenotime, pc1, msi = df_comp$msi) %>% 
+  gather(feature, expression, -phenotime, -pc1, -msi) 
+
+treg_tidy %>% 
+  ggplot(aes(x = phenotime, y = expression, color = feature)) +
+  geom_point(alpha = 0.7) + facet_wrap(~ feature, scales = "free_y") +
+  stat_smooth(se = FALSE, color = "black", method = "lm", formula = y ~ ns(x,3)) +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") +
+  ylab("Expression") + xlab("t")
+
+treg_plot <- last_plot()
+
+
+```
+
+
+Figure for NIPS poster:
+
+```{r nips-figre}
+top_grid <- plot_grid(pc1_vs_meta, pc1_vs_msi)
+
+plot_grid(top_grid, ard_plot, treg_plot, nrow = 3, labels = "AUTO")
+ggsave("../figs/NIPS_figure.png", width = 9, height = 11)
+```
+
+
+Correlations:
+```{r correlations}
+# ## Corelations
+ group_by(treg_tidy, feature) %>% 
+   summarise(cor_phenotime = cor(expression, phenotime, method = "pearson"),
+             cor_pc1 = cor(expression, pc1, method = "pearson"))
+```
+
+Some extra interesting phenotime plots:
+
+```{r extra-phenotime}
+
+plot_grid(
+treg_tidy %>% 
+  ggplot(aes(x = pc1, y = expression, color = msi)) +
+  geom_point(alpha = 0.3) + facet_wrap(~ feature, scales = "free_y") +
+  stat_smooth(se = FALSE, method = "lm", formula = y ~ ns(x,3)) +
+  scale_color_brewer(palette = "Set1") +
+  ylab("Expression") + xlab("PC1"),
+treg_tidy %>% 
+  ggplot(aes(x = phenotime, y = expression, color = msi)) +
+  geom_point(alpha = 0.3) + facet_wrap(~ feature, scales = "free_y") +
+  stat_smooth(se = FALSE, method = "lm", formula = y ~ ns(x,3)) +
+  scale_color_brewer(palette = "Set1") +
+  ylab("Expression") + xlab("phenotime"),
+nrow = 2)
+
+
+```
+
+
 
