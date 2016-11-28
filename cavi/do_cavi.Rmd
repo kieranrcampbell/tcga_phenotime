@@ -103,6 +103,8 @@ beta1 <- NULL
 
 niter <- 1000
 
+elbo_old <- -Inf
+
 for(i in 1:niter) {
 
   # print(paste("iteration", i))
@@ -137,11 +139,17 @@ for(i in 1:niter) {
       a_chi[p,g] <- cuch[1]; b_chi[p,g] <- cuch[2]
     }
   }
-
   
-  mt1 <- c(mt1, m_t[1])
   cup <- cavi_update_pst(y, x, m_c, m_mu, s_c, m_alpha, m_beta, s_beta, a_tau, b_tau, q, tau_q)
   m_t <- cup[,1]; s_t <- cup[,2]
+
+  if(i %% 10 == 0) {
+    elbo <- calculate_elbo(y, x, m_t, s_t, m_c, s_c, m_alpha, s_alpha, m_beta, 
+      s_beta, a_tau, b_tau, a_chi, b_chi, m_mu, s_mu, q, tau_q, 
+      tau_mu, tau_c, a, b, tau_alpha, a_beta, b_beta) 
+    print(paste(elbo, (elbo - elbo_old) / elbo * 100))
+    elbo_old <- elbo
+  }
 
   
 }

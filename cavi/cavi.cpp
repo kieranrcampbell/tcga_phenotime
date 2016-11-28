@@ -372,7 +372,7 @@ double calculate_E_log_Y_given_theta(NumericMatrix y, NumericMatrix x,
 }
 
 // [[Rcpp::export]]
-double calculate_E_log_theta(NumericVector m_t, NumericVector s_t, 
+double calculate_E_log_p(NumericVector m_t, NumericVector s_t, 
                              NumericVector m_c, NumericVector s_c,
                              NumericMatrix m_alpha, NumericMatrix s_alpha,
                              NumericMatrix m_beta, NumericMatrix s_beta,
@@ -392,12 +392,12 @@ double calculate_E_log_theta(NumericVector m_t, NumericVector s_t,
     elp -= tau_q / 2 * (m_t[i] * m_t[i] + s_t[i] - 2 * m_t[i] * q[i]);
   
   for(int g = 0; g < G; g++) {
-    elp -= tau_mu / 2 * (m_mu[g] * m_mu[g] + s_mu[g]) - 
+    elp -= tau_mu / 2 * (m_mu[g] * m_mu[g] + s_mu[g]) + 
       tau_c / 2 * (m_c[g] * m_c[g] + s_c[g]);
     elp += (a - 1) * (boost::math::digamma(a_tau[g]) - log(b_tau[g])) -
       a_tau[g] / b_tau[g] * b;
     for(int p = 0; p < P; p++) {
-      elp -= tau_alpha / 2 * (m_alpha(p,g) * m_alpha(p,g) + s_alpha(p,g)) -
+      elp -= tau_alpha / 2 * (m_alpha(p,g) * m_alpha(p,g) + s_alpha(p,g)) +
         a_chi(p,g) / (2 * b_chi(p,g)) * (m_beta(p,g) * m_beta(p,g) + s_beta(p,g));
       elp += (a_beta - 1) * (boost::math::digamma(a_chi(p,g)) - log(b_chi(p,g))) -
         a_chi(p,g) / b_chi(p,g) * b_beta;
@@ -408,18 +408,74 @@ double calculate_E_log_theta(NumericVector m_t, NumericVector s_t,
 }
 
 // [[Rcpp::export]]
+
+double calculate_E_log_q(NumericVector s_t, NumericVector s_c,
+                  NumericMatrix s_alpha, NumericMatrix s_beta,
+                  NumericVector a_tau, NumericVector b_tau,
+                  NumericVector s_mu,
+                  NumericMatrix a_chi, NumericMatrix b_chi) {
+  double elq = 0.0;
+  
+  int N = s_t.size();
+  int G = s_c.size();
+  int P = a_chi.nrow();
+  
+  for(int i = 0; i < N; i++)
+    elq -= 0.5 * s_t[i];
+  
+  for(int g = 0; g < G; g++) {
+    elq -= 0.5 * s_mu[g] + 0.5 * s_c[g] - (a_tau[g] - 1) * 
+      (boost::math::digamma(a_tau[g]) - log(b_tau[g])) + a_tau[g];
+    for(int p = 0; p < P; p++) {
+      elq -= 0.5 * s_alpha(p,g) + 0.5 * s_beta(p,g) - (a_chi(p,g) - 1) * 
+        (boost::math::digamma(a_chi(p,g)) - log(b_chi(p,g))) + a_chi(p,g);
+    }
+  }
+  
+  return elq;
+}
+
+// [[Rcpp::export]]
 double calculate_elbo(NumericMatrix y, NumericMatrix x, 
-                      NumericVector m_t, NumericVector s_t, NumericVector m_c,
-                      NumericMatrix m_alpha, NumericMatrix m_beta,
+                      NumericVector m_t, NumericVector s_t, 
+                      NumericVector m_c, NumericVector s_c,
+                      NumericMatrix m_alpha, NumericMatrix s_alpha,
+                      NumericMatrix m_beta, NumericMatrix s_beta,
                       NumericVector a_tau, NumericVector b_tau,
                       NumericMatrix a_chi, NumericMatrix b_chi,
-                      NumericVector m_mu) {
-  double elbo = 0.0;
+                      NumericVector m_mu, NumericVector s_mu,
+                      NumericVector q, double tau_q, double tau_mu, double tau_c,
+                      double a, double b, double tau_alpha,
+                      double a_beta, double b_beta) {
   
+  double ely = calculate_E_log_Y_given_theta( y,  x,
+                                              m_t,  s_t,
+                                              m_c,  s_c,
+                                              m_alpha,  s_alpha,
+                                              m_beta,  s_beta,
+                                              a_tau,  b_tau,
+                                              m_mu,  s_mu);
   
+  double elp = calculate_E_log_p( m_t,  s_t,
+                                  m_c,  s_c,
+                                  m_alpha,  s_alpha,
+                                  m_beta,  s_beta,
+                                  a_tau,  b_tau,
+                                  m_mu,  s_mu,
+                                  a_chi,  b_chi,
+                                  q,  tau_q,  tau_mu,  tau_c,
+                                  a,  b,  tau_alpha,
+                                  a_beta,  b_beta);
+
+  double elq = calculate_E_log_q( s_t,  s_c,
+                 s_alpha,  s_beta,
+                 a_tau,  b_tau,
+                 s_mu,
+                 a_chi,  b_chi);
   
-  return elbo;
+  return ely + elp - elq;
 }
+
 
 
 
