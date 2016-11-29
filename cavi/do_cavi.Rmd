@@ -30,8 +30,8 @@ Generate data:
 ```{r generate-data}
 set.seed(123L)
 
-G <- 200
-P <- 1
+G <- 100
+P <- 2
 N <- 250
 
 # Hyperpars
@@ -74,15 +74,15 @@ for(i in 1:N) {
 Have a quick look on PCA:
 
 ```{r pca-data}
-df <- data_frame(pc1 = prcomp(y)$x[,1], x = x[,1], pst = pst)
+df <- data_frame(pc1 = prcomp(y)$x[,1], x1 = x[,1], x2 = x[,2], pst = pst)
 
-ggplot(df, aes(x = pc1, y = pst, color = as.factor(x))) + geom_point()
+ggplot(df, aes(x = pc1, y = pst, color = as.factor(x1), shape = as.factor(x2))) + geom_point()
 ```
 
 Initial values for CAVI:
 
 ```{r run-cavi}
-pcavi <- phenotime_cavi(y, x, elbo_tol = 0.01, thin = 5)
+pcavi <- phenotime_cavi(y, x, elbo_tol = 0.01, thin = 10)
 ```
 
 Plot results:

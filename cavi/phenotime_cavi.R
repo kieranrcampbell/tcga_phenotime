@@ -42,7 +42,7 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
   malpha1 <- NULL
   
   if(verbose) {
-    cat("ELBO\tChange (%) \n")
+    cat("ELBO\t\tChange (%) \n")
   }
 
   elbo_old <- -Inf
@@ -54,15 +54,11 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
     
     cumu <- cavi_update_mu(y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau, tau_mu)
     m_mu <- cumu[,1]; s_mu <- cumu[,2]
-    # m_mu <- rep(0, G); s_mu <- rep(1, G)
-    
-    ct1 <- c(ct1, m_c[1])
+
     cuc <- cavi_update_c(y, x, m_t, s_t, m_alpha, m_beta, a_tau, b_tau,
                          m_mu, tau_c)
     m_c <- cuc[,1]; s_c <- cuc[,2]
     
-    
-    taug1 <- c(taug1, a_tau[1] / b_tau[1])
     cut <- cavi_update_tau(y, x, m_t, s_t, m_c, s_c, m_alpha, m_beta, s_alpha,
                            s_beta, m_mu, s_mu, a, b)
     a_tau <- cut[,1]; b_tau <- cut[,2]
@@ -84,8 +80,6 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
         a_chi[p,g] <- cuch[1]; b_chi[p,g] <- cuch[2]
       }
     }
-    
-    malpha1 <<- c(malpha1, s_alpha[1,1])
     
     cup <- cavi_update_pst(y, x, m_c, m_mu, s_c, m_alpha, m_beta, s_beta, a_tau, b_tau, q, tau_q)
     m_t <- cup[,1]; s_t <- cup[,2]
