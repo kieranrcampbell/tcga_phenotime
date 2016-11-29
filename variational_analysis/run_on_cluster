@@ -1,0 +1,5 @@
+#!/bin/bash
+#$ -N phenotime
+#$ -P webber.prjc -q short.qc
+#$ -cwd -V
+Rscript va.R

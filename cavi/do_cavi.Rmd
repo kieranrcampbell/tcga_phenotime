@@ -19,6 +19,7 @@ library(tidyverse)
 
 setwd("~/oxford/cancer/tcga_phenotime/cavi")
 
+source("phenotime_cavi.R")
 sourceCpp("cavi.cpp")
 
 set.seed(123)
@@ -73,122 +74,31 @@ ggplot(df, aes(x = pc1, y = pst, color = as.factor(x))) + geom_point()
 
 Initial values for CAVI:
 
-```{r initial-cavi-values}
-set.seed(123L)
-a_tau <- rgamma(G, 2)
-b_tau <- rgamma(G, 2)
-ab_tau <- a_tau / b_tau
-m_mu <- rnorm(G)
-s_c <- rgamma(G, 2)
-s_beta <- s_alpha <- m_beta <- m_alpha <- matrix(0, nrow = P, ncol = G) # matrix(rnorm(P * G), nrow = P)
-# m_beta <- matrix(rnorm(P * G), nrow = P)
-# s_alpha <- matrix(rgamma(P * G, 2), nrow = P)
-# s_beta <- matrix(rgamma(P * G, 2), nrow = P)
-
-a_chi <- matrix(rgamma(P * G, 2), nrow = P)
-b_chi <- matrix(rgamma(P * G, 2), nrow = P)
-
-m_t <- prcomp(scale(y))$x[,1]
-s_t <- rep(1, N) # CHANGE TO 1
-m_c <- apply(y, 2, function(yy) coef(lm(yy ~ m_t))[2])
-
-m_mu <- rep(0, G)
-s_mu <- rep(1, G)
-
-
-mt1 <- NULL
-ct1 <- NULL
-taug1 <- NULL
-beta1 <- NULL
-
-niter <- 1000
-
-elbo_old <- -Inf
-
-for(i in 1:niter) {
-
-  # print(paste("iteration", i))
-  cumu <- cavi_update_mu(y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau, tau_mu)
-  m_mu <- cumu[,1]; s_mu <- cumu[,2]
-
-    ct1 <- c(ct1, m_c[1])
-  cuc <- cavi_update_c(y, x, m_t, s_t, m_alpha, m_beta, a_tau, b_tau,
-                       m_mu, tau_c)
-  m_c <- cuc[,1]; s_c <- cuc[,2]
-
-  
-  taug1 <- c(taug1, a_tau[1] / b_tau[1])
-  cut <- cavi_update_tau(y, x, m_t, s_t, m_c, s_c, m_alpha, m_beta, s_alpha,
-    s_beta, m_mu, s_mu, a, b)
-  a_tau <- cut[,1]; b_tau <- cut[,2]
-
-
-  beta1 <- c(beta1, m_beta[1,1])
-  for(g in 1:G) {
-    for(p in 1:P) {
-      cua <- cavi_update_alpha(p-1, g-1, y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau,
-                               m_mu, tau_alpha)
-      m_alpha[p,g] <- cua[1]; s_alpha[p,g] <- cua[2]
-
-      cub <- cavi_update_beta(p-1, g-1, y, x, m_t, s_t, m_c, m_alpha, m_beta, a_tau,
-                              b_tau, a_chi, b_chi, m_mu)
-      s_beta[p,g] <- cub[2]
-      m_beta[p,g] <- cub[1]
-
-      cuch <- cavi_update_chi(m_beta[p,g], s_beta[p,g], a_beta, b_beta)
-      a_chi[p,g] <- cuch[1]; b_chi[p,g] <- cuch[2]
-    }
-  }
-  
-  cup <- cavi_update_pst(y, x, m_c, m_mu, s_c, m_alpha, m_beta, s_beta, a_tau, b_tau, q, tau_q)
-  m_t <- cup[,1]; s_t <- cup[,2]
-
-  if(i %% 10 == 0) {
-    elbo <- calculate_elbo(y, x, m_t, s_t, m_c, s_c, m_alpha, s_alpha, m_beta, 
-      s_beta, a_tau, b_tau, a_chi, b_chi, m_mu, s_mu, q, tau_q, 
-      tau_mu, tau_c, a, b, tau_alpha, a_beta, b_beta) 
-    print(paste(elbo, (elbo - elbo_old) / elbo * 100))
-    elbo_old <- elbo
-  }
-
-  
-}
+```{r run-cavi}
+pcavi <- phenotime_cavi(y, x)
 ```
 
 Plot results:
 
 ```{r plot-results}
-qplot( pst, m_t)
+qplot( pst, pcavi$m_t)
 ```
 
-Track some quantities of interest:
 
-```{r mt-diag}
-d <- data_frame(iter = 1:niter, pst1 = mt1, c1 = ct1, tau1 = taug1, beta1) %>% 
-  gather(variable, value, -iter)
-
-ggplot(d, aes(x = iter, y = value)) + geom_line() + 
-  facet_wrap(~ variable, scales = "free_y")
-```
 
 Comparisons:
 
 ```{r compare-c}
-qplot(c, m_c)
-```
-
-
-```{r compare-tau}
-qplot(tau, a_tau / b_tau)
+qplot(c, pcavi$m_c)
 ```
 
 
 ```{r compare-coef}
-qplot(as.vector(beta), as.vector(m_beta))
+qplot(as.vector(beta), as.vector(pcavi$m_beta))
 ```
 
 ```{r compare-chi}
-qplot(as.vector(beta), 1 / as.vector(a_chi / b_chi))
+qplot(as.vector(beta), 1 / as.vector(pcavi$chi_exp))
 ```
 
 
