@@ -4,12 +4,13 @@ library(Rcpp)
 
 phenotime_cavi <- function(y, x, maxiter = 1e4,
                            elbo_tol = 0.001,
+                           thin = 10,
                            verbose = TRUE,
                            tau_q = 1,
                            tau_mu = 1,
                            tau_c = 1,
                            a = 2, b = 2,
-                           tau_alpha = 2,
+                           tau_alpha = 1,
                            a_beta = 6, b_beta = 0.1,
                            a_tau = 2, b_tau = 0.5,
                            q = rep(0, nrow(y))) {
@@ -25,7 +26,8 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
   ab_tau <- a_tau / b_tau
   m_mu <- rnorm(G)
   s_c <- rgamma(G, 2)
-  s_beta <- s_alpha <- m_beta <- m_alpha <- matrix(1, nrow = P, ncol = G) # matrix(rnorm(P * G), nrow = P)
+  s_beta <- s_alpha <- matrix(1, nrow = P, ncol = G)
+  m_beta <- m_alpha <- matrix(0, nrow = P, ncol = G)
   
   a_chi <- matrix(rgamma(P * G, 2), nrow = P)
   b_chi <- matrix(rgamma(P * G, 2), nrow = P)
@@ -37,10 +39,7 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
   m_mu <- rep(0, G)
   s_mu <- rep(1, G)
   
-  mt1 <- NULL
-  ct1 <- NULL
-  taug1 <- NULL
-  beta1 <- NULL
+  malpha1 <- NULL
   
   if(verbose) {
     cat("ELBO\tChange (%) \n")
@@ -50,11 +49,12 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
   delta_elbo <- Inf
   elbos <- NULL
   i <- 1
-  
+
   while(i < maxiter & delta_elbo > elbo_tol) {
     
     cumu <- cavi_update_mu(y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau, tau_mu)
     m_mu <- cumu[,1]; s_mu <- cumu[,2]
+    # m_mu <- rep(0, G); s_mu <- rep(1, G)
     
     ct1 <- c(ct1, m_c[1])
     cuc <- cavi_update_c(y, x, m_t, s_t, m_alpha, m_beta, a_tau, b_tau,
@@ -67,13 +67,13 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
                            s_beta, m_mu, s_mu, a, b)
     a_tau <- cut[,1]; b_tau <- cut[,2]
     
-    
-    beta1 <- c(beta1, m_beta[1,1])
+
     for(g in 1:G) {
       for(p in 1:P) {
         cua <- cavi_update_alpha(p-1, g-1, y, x, m_t, m_c, m_alpha, m_beta, a_tau, b_tau,
                                  m_mu, tau_alpha)
-        m_alpha[p,g] <- cua[1]; s_alpha[p,g] <- cua[2]
+        m_alpha[p,g] <- cua[1] 
+        s_alpha[p,g] <- cua[2]
         
         cub <- cavi_update_beta(p-1, g-1, y, x, m_t, s_t, m_c, m_alpha, m_beta, a_tau,
                                 b_tau, a_chi, b_chi, m_mu)
@@ -85,11 +85,13 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
       }
     }
     
+    malpha1 <<- c(malpha1, s_alpha[1,1])
+    
     cup <- cavi_update_pst(y, x, m_c, m_mu, s_c, m_alpha, m_beta, s_beta, a_tau, b_tau, q, tau_q)
     m_t <- cup[,1]; s_t <- cup[,2]
     
     ## calculate elbo and report
-    if(i %% 10 == 0) {
+    if(i %% thin == 0) {
       elbo <- calculate_elbo(y, x, m_t, s_t, m_c, s_c, m_alpha, s_alpha, m_beta, 
                              s_beta, a_tau, b_tau, a_chi, b_chi, m_mu, s_mu, q, tau_q, 
                              tau_mu, tau_c, a, b, tau_alpha, a_beta, b_beta) 
@@ -107,7 +109,8 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
     warning("ELBO not converged")
   }
 
-  rlist <- list(m_t = m_t, m_c = m_c, m_alpha = m_alpha,
+  rlist <- list(m_t = m_t, m_c = m_c, m_mu = m_mu, m_alpha = m_alpha,
+                s_alpha = s_alpha, a_tau = a_tau, b_tau = b_tau,
                 m_beta = m_beta, chi_exp = a_chi / b_chi,
                 elbos = elbos)
   return(rlist)

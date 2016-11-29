@@ -253,8 +253,8 @@ NumericVector cavi_update_alpha(int p, int g, NumericMatrix y, NumericMatrix x,
   
   double s_alpha_pg = tau_alpha;
   for(int i = 0; i < N; i++)
-    s_alpha_pg += a_tau[g] / b_tau[g] * pow(x(i,p), 2);
-  s_alpha_pg = 1 / s_alpha_pg;
+    s_alpha_pg += a_tau[g] / b_tau[g] * x(i,p) * x(i,p);
+  s_alpha_pg = 1.0 / s_alpha_pg;
 
   // need to calculate alpha sum without the p'th entry
   NumericVector alpha_sum_no_p(N, 0.0);
@@ -265,9 +265,9 @@ NumericVector cavi_update_alpha(int p, int g, NumericMatrix y, NumericMatrix x,
     }
   }
   
-  double m_alpha_pg = 0;
+  double m_alpha_pg = 0.0;
   for(int i = 0; i < N; i++) {
-    m_alpha_pg += y(i,g) - m_mu[g] - m_t[i] * (m_c[g] + beta_sum(g,i)) - alpha_sum_no_p[i];
+    m_alpha_pg += x(i,p) * (y(i,g) - m_mu[g] - m_t[i] * (m_c[g] + beta_sum(g,i)) - alpha_sum_no_p[i]);
   }
   m_alpha_pg *= a_tau[g] / b_tau[g];
   

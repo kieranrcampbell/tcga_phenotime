@@ -28,9 +28,11 @@ set.seed(123)
 Generate data:
 
 ```{r generate-data}
+set.seed(123L)
+
 G <- 200
-P <- 2
-N <- 300
+P <- 1
+N <- 250
 
 # Hyperpars
 tau_q <- 1
@@ -47,19 +49,24 @@ c <- rnorm(G, 0, 1 / sqrt(tau_c))
 
 chi <- matrix(rgamma(P * G, a_beta, b_beta), nrow = P)
 
+alpha <- matrix(rnorm(P * G, 0, 1 / sqrt(tau_alpha)), nrow = P)
 beta <- t(apply(chi, 1, function(ch) rnorm(G, 0, 1 / sqrt(ch))))
+
+mu <- rnorm(G, 0, 1 / sqrt(tau_mu))
 
 tau <- rgamma(G, a_tau, b_tau)
 
 x <- scale(matrix(sample(0:1, size = N * P, replace = TRUE), nrow = N))
 
+alpha_sum <- t(alpha) %*% t(x)
 beta_sum <- t(beta) %*% t(x)
 
 y <- matrix(NA, nrow = N, ncol = G)
 
 for(i in 1:N) {
   for(g in 1:G) {
-    y[i,g] <- pst[i] * (c[g] + beta_sum[g,i]) + rnorm(1, 0, 1 / sqrt(tau[g]))
+    y[i,g] <- alpha_sum[g,i] + 
+      pst[i] * (c[g] + beta_sum[g,i]) + rnorm(1, 0, 1 / sqrt(tau[g]))
   }
 }
 ```
@@ -75,7 +82,7 @@ ggplot(df, aes(x = pc1, y = pst, color = as.factor(x))) + geom_point()
 Initial values for CAVI:
 
 ```{r run-cavi}
-pcavi <- phenotime_cavi(y, x)
+pcavi <- phenotime_cavi(y, x, elbo_tol = 0.01, thin = 5)
 ```
 
 Plot results:
@@ -93,8 +100,18 @@ qplot(c, pcavi$m_c)
 ```
 
 
+```{r compare-alpha}
+qplot(alpha[1,], pcavi$m_alpha[1,])
+```
+
 ```{r compare-coef}
 qplot(as.vector(beta), as.vector(pcavi$m_beta))
+```
+
+Precision:
+
+```{r plot-precision}
+qplot(tau, pcavi$a_tau / pcavi$b_tau)
 ```
 
 ```{r compare-chi}
