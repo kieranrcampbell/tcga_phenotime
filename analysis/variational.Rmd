@@ -62,22 +62,30 @@ df_beta <- data_frame(
   chi_meta = pcavi$chi_exp[2,],
   alpha_msi = pcavi$m_alpha[1,],
   alpha_meta = pcavi$m_alpha[2,],
-  gene = featureNames(sc)
+  gene = featureNames(sc),
+  is_mmr = fData(sc)$is_mmr
 )
 
-chi_thresh <- 0.025
+chi_thresh <- 0.022
 
-ggplot(df_beta, aes(x = beta_msi, y = 1 / chi_msi)) + geom_point() +
+ggplot(df_beta, aes(x = beta_msi, y = 1 / chi_msi, color = is_mmr)) + geom_point() +
   geom_label_repel(data = dplyr::filter(df_beta, chi_msi < 1 / chi_thresh), aes(label = gene))
 
-ggplot(df_beta, aes(x = beta_meta, y = 1 / chi_meta)) + geom_point() +
-  geom_label_repel(data = dplyr::filter(df_beta, chi_meta < 1 / 0.019), aes(label = gene))
+ggplot(df_beta, aes(x = beta_msi, y = 1 / chi_msi, color = is_mmr)) + geom_point() +
+  geom_point(data = dplyr::filter(df_beta, is_mmr)) +
+  scale_color_brewer(palette = "Set1") +
+    geom_label_repel(data = dplyr::filter(df_beta, chi_msi < 1 / chi_thresh), aes(label = gene))
+  # geom_label_repel(data = dplyr::filter(df_beta, is_mmr), aes(label = gene))
+  
 
-ggplot(df_beta, aes(x = beta_msi, y = 1 / chi_msi)) +
-  stat_density_2d(geom = "raster", aes(fill = ..density..), contour = FALSE) +
-  scale_fill_viridis()
-
-ggplot(df_beta, aes(x = alpha_msi, y = beta_msi)) + geom_point()
+# ggplot(df_beta, aes(x = beta_meta, y = 1 / chi_meta)) + geom_point() +
+#   geom_label_repel(data = dplyr::filter(df_beta, chi_meta < 1 / 0.019), aes(label = gene))
+# 
+# ggplot(df_beta, aes(x = beta_msi, y = 1 / chi_msi)) +
+#   stat_density_2d(geom = "raster", aes(fill = ..density..), contour = FALSE) +
+#   scale_fill_viridis()
+# 
+# ggplot(df_beta, aes(x = alpha_msi, y = beta_msi)) + geom_point()
 ```
 
 
@@ -89,7 +97,7 @@ tmap <- pcavi$m_t
 top_genes <- dplyr::arrange(df_beta, chi_msi) %>% 
   extract2("gene") %>% head(40)
 
-t(exprs(sc))[, top_genes[1:12]] %>% 
+t(exprs(sc))[, top_genes[21:40]] %>% 
   as_data_frame() %>% 
   dplyr::mutate(phenotime = tmap, x = factor(x_msi)) %>% 
   gather(gene, expression, -phenotime, -x) %>% 
@@ -98,16 +106,53 @@ t(exprs(sc))[, top_genes[1:12]] %>%
   scale_color_brewer(palette = "Set1", name = "MSI") +
   stat_smooth(se = FALSE, method = "lm", size = 2, formula = y ~ ns(x,3))
 
-# t(exprs(sc))[, dplyr::filter(df_beta, chi_meta < 1 / 0.019) %>% extract2("gene")] %>% 
-#   as_data_frame() %>% 
-#   dplyr::mutate(phenotime = tmap, x = factor(x_metastasis)) %>% 
-#   gather(gene, expression, -phenotime, -x) %>% 
-#   ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
-#   facet_wrap(~ gene, scales = "free_y") + 
-#   scale_color_brewer(palette = "Set1", name = "MSI") +
-#   stat_smooth(se = FALSE, method = "lm", size = 2)
 ```
 
 
+Immune response:
 
+```{r immune-resp}
+immune_genes <- c("FOXP3", "CD4")
+immune_inds <- match(immune_genes, fData(sc)$hgnc_symbol)
 
+t(exprs(sc))[, immune_inds, drop=FALSE] %>% 
+  as_data_frame() %>% 
+  dplyr::mutate(phenotime = tmap, x = factor(x_msi)) %>% 
+  gather(gene, expression, -phenotime, -x) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
+  facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(palette = "Set1", name = "MSI") +
+  stat_smooth(se = FALSE, method = "lm", size = 2)#, formula = y ~ ns(x,3))
+```
+
+Metastasis:
+
+```{r top-meta}
+
+top_genes <- dplyr::arrange(df_beta, chi_meta) %>% 
+  extract2("gene") %>% head(20)
+
+t(exprs(sc))[, top_genes] %>%
+  as_data_frame() %>%
+  dplyr::mutate(phenotime = tmap, x = factor(x_metastasis)) %>%
+  gather(gene, expression, -phenotime, -x) %>%
+  ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
+  facet_wrap(~ gene, scales = "free_y") +
+  scale_color_brewer(palette = "Set1", name = "Metastatic") +
+  stat_smooth(se = FALSE, method = "lm", size = 2)
+```
+
+```{r}
+igenes <- c("MLH1", "EPM2AIP1")
+
+ii <- match(igenes, fData(sc)$hgnc_symbol)
+
+t(exprs(sc))[, ii, drop=FALSE] %>% 
+  as_data_frame() %>% 
+  dplyr::mutate(phenotime = tmap, x = factor(x_msi)) %>% 
+  gather(gene, expression, -phenotime, -x) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
+  facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(palette = "Set1", name = "MSI") +
+  stat_smooth(se = FALSE, method = "lm", size = 2, formula = y ~ ns(x,3))
+```

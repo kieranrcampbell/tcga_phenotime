@@ -12,7 +12,7 @@ scale_vec <- function(x) (x - mean(x)) / sd(x)
 
 var_exprs <- matrixStats::rowVars(exprs(sc_tumour_gene))
 
-to_use <- var_exprs > 0.4 | fData(sc_tumour_gene)$is_mmr
+to_use <- var_exprs > 0.15 | fData(sc_tumour_gene)$is_mmr
 
 print(paste("Retaining", sum(to_use), "genes"))
 print(paste(sum(fData(sc_tumour_gene)), "mmr genes"))
@@ -30,7 +30,7 @@ x_metastasis <- scale_vec(x_metastasis)
 
 x_msi <- scale_vec( 1 * (sc$msi_status == "msi-h") )
 
-x <- cbind(x_msi, x_metastasis)
+x <- cbind(x_msi)#, x_metastasis)
 
 y <- scale(t(exprs(sc)))
 
