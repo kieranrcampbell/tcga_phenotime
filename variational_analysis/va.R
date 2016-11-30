@@ -12,7 +12,7 @@ scale_vec <- function(x) (x - mean(x)) / sd(x)
 
 var_exprs <- matrixStats::rowVars(exprs(sc_tumour))
 
-to_use <- var_exprs > 2
+to_use <- var_exprs > 1
 
 sc <- sc_tumour[to_use, ]
 
@@ -32,7 +32,7 @@ y <- scale(t(exprs(sc)))
 
 # Call phenotime ----------------------------------------------------------
 
-pcavi <- phenotime_cavi(y, x, elbo_tol = 0.01)
+pcavi <- phenotime_cavi(y, x, elbo_tol = 0.005)
 
 # Save results
 retained_fnames <- featureNames(sc)
