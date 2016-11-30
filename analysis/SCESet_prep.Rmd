@@ -102,6 +102,22 @@ sc_tumour_gene <- sc_tumour_gene[not_pseudogene, ]
 sc_tumour_gene <- calculateQCMetrics(sc_tumour_gene)
 ```
 
+Add in MMR genes:
+
+```{r add-mmr-gene}
+## Add in MMR genes
+
+mmr_genes <-  c("MLH1", "MLH3", "MSH2", "MSH3", "MSH6", "^PMS1_", "^PMS2_",
+               "PCNA_", "^RPA1", "^RPA2", "^RPA3", "HMGB1", "RFC",  "^POLD1", "POLD2", 
+               "POLD3", "POLD4", "^LIG1")
+
+gene_inds <- unlist(sapply(mmr_genes, grep, featureNames(sc_tumour_gene)))
+
+is_mmr <- rep(FALSE, nrow(sc_tumour_gene))
+is_mmr[gene_inds] <- TRUE
+fData(sc_tumour_gene)$is_mmr <- is_mmr
+```
+
 And save the result:
 
 ```{r save-tumour-gene}
