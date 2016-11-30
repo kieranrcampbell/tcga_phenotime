@@ -204,8 +204,28 @@ Data preparation:
 
 ```{r phenotime-data-preparation}
 sc_tumour <- sc[, sc$sample_type != "normal"]
+```
+
+Construct a gene level SCESet:
+
+```{r construct-gene-level}
+eti <- sapply(strsplit(featureNames(sc_tumour), "_", fixed = TRUE), `[`, 1)
 
 
+fData(sc_tumour)$ensembl_transcript_id <- eti
+
+sc_tumour <- getBMFeatureAnnos(sc_tumour, 
+                               filters = "ensembl_transcript_id",
+                               attributes = c("ensembl_transcript_id",
+                                              "ensembl_gene_id",
+                                              "hgnc_symbol"),
+                               feature_symbol = "hgnc_symbol",
+                               feature_id = "ensembl_transcript_id",
+                               dataset = "hsapiens_gene_ensembl")
+```
+
+
+```{r phenot}
 weight_covariate <- as.numeric(sc_tumour$weight)
 weight_covariate[is.na(weight_covariate)] <- mean(weight_covariate, na.rm = TRUE)
 

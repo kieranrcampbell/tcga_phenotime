@@ -1,0 +1,109 @@
+---
+title: "Preparation of COAD SCESet for phenotime"
+author: "Kieran Campbell"
+date: "9 October 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(scater)
+library(tidyverse)
+library(magrittr)
+library(matrixStats)
+library(ggrepel)
+library(rstan)
+library(MCMCglmm)
+library(coda)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+
+```{r data-prep, include = FALSE}
+load("../data/sce_coad_kallisto.Rdata")
+sce <- sce[matrixStats::rowVars(tpm(sce)) > 0, ]
+is_exprs(sce) <- tpm(sce) > 0
+sce <- calculateQCMetrics(sce)
+
+hgnc_symbols <- sapply(strsplit(featureNames(sce), "_"), `[`, 2)
+
+dvar <- data_frame(var_exprs = matrixStats::rowVars(exprs(sce)),
+                   hgnc_symbols)
+fData(sce) <- cbind(fData(sce), dvar)
+
+## group factors to avoid low frequency ones
+gt_table <- table(fData(sce)$gene_type)
+new_gt_names <- names(gt_table)
+new_gt_names[gt_table < 50] <- "other"
+fData(sce)$short_gene_type <- plyr::mapvalues(fData(sce)$gene_type,
+                                             from = names(gt_table),
+                                             to = new_gt_names)
+```
+
+# Strip out technical effects
+
+```{r pca-all}
+sce <- plotPCA(sce, ncomponents = 3, colour_by = "short_plate",
+               return_SCESet = TRUE)
+```
+
+We see technically distinct clusters of cells. We want to target the largest, so strip out those that aren't there:
+
+```{r subset-sceset}
+sc <- sce[, redDim(sce)[,1] < 0 & redDim(sce)[,3] > -10]
+
+## After subsetting, re-calculate QC metrics
+sc <- calculateQCMetrics(sc)
+```
+
+And let's plot this and colour by tumour / normal:
+
+```{r sc-pca}
+plotPCA(sc, colour_by = "sample_type", ncomponents = 3)
+```
+
+
+Data preparation:
+
+```{r phenotime-data-preparation}
+sc_tumour <- sc[, sc$sample_type != "normal"]
+```
+
+Construct a gene level SCESet:
+
+```{r to-gene-level}
+sc_tumour_gene <- summariseExprsAcrossFeatures(sc_tumour,
+                                               summarise_by = "ensembl_gene_id")
+```
+
+Add meta data:
+
+```{r add-meta}
+fData(sc_tumour_gene)$ensembl_gene_id <- fData(sc_tumour_gene)$exprs_collapsed_to
+
+sc_tumour_gene <- getBMFeatureAnnos(sc_tumour_gene, 
+                               filters = "ensembl_gene_id",
+                               attributes = c("ensembl_gene_id",
+                                              "hgnc_symbol",
+                                              "transcript_biotype"),
+                               feature_symbol = "hgnc_symbol",
+                               feature_id = "ensembl_gene_id",
+                               dataset = "hsapiens_gene_ensembl")
+
+featureNames(sc_tumour_gene) <- paste0(fData(sc_tumour_gene)$hgnc_symbol, "_",
+                                       fData(sc_tumour_gene)$exprs_collapsed_to)
+
+pseudogenes <- grepl("pseudogene", fData(sc_tumour_gene)$transcript_biotype)
+not_pseudogene <- which(!pseudogenes)
+
+sc_tumour_gene <- sc_tumour_gene[not_pseudogene, ]
+sc_tumour_gene <- calculateQCMetrics(sc_tumour_gene)
+```
+
+And save the result:
+
+```{r save-tumour-gene}
+save(sc_tumour_gene, file = "../data/sc_coad_gene.Rdata")
+```

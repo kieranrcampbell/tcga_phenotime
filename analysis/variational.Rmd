@@ -1,0 +1,111 @@
+---
+title: "Variational inference"
+author: "Kieran Campbell"
+date: "9 October 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+library(scater)
+library(tidyverse)
+library(magrittr)
+library(matrixStats)
+library(ggrepel)
+library(cowplot)
+library(viridis)
+library(splines)
+
+
+set.seed(123L)
+
+scale_vec <- function(x) (x - mean(x)) / sd(x)
+```
+
+
+```{r load-all-data}
+load("../variational_analysis/va_results.Rdata")
+
+load("../data/sc_coad_tumour_only.Rdata")
+
+sc <- sc_tumour[retained_fnames, ]
+
+x_metastasis <- 1 * (sc$m_stage != "m0")
+x_metastasis[is.na(x_metastasis)] <- mean(x_metastasis, na.rm = TRUE)
+x_metastasis <- scale_vec(x_metastasis)
+
+x_msi <- scale_vec( 1 * (sc$msi_status == "msi-h") )
+
+x <- cbind(x_msi, x_metastasis)
+```
+
+Compare pseudotime to PC1:
+
+```{r pseudotime-vs-pc1}
+pc1 <- prcomp(t(exprs(sc)), scale = TRUE)$x[,1]
+
+qplot(pc1, pcavi$m_t, color = factor(x_msi)) +
+  scale_color_brewer(palette = "Set1")
+```
+
+Look at beta plot:
+
+
+```{r beta-plot}
+df_beta <- data_frame(
+  c = pcavi$m_c,
+  beta_msi = pcavi$m_beta[1,],
+  chi_msi = pcavi$chi_exp[1,],
+  beta_meta = pcavi$m_beta[2,],
+  chi_meta = pcavi$chi_exp[2,],
+  alpha_msi = pcavi$m_alpha[1,],
+  alpha_meta = pcavi$m_alpha[2,],
+  gene = featureNames(sc)
+)
+
+
+ggplot(df_beta, aes(x = beta_msi, y = 1 / chi_msi)) + geom_point() +
+  geom_label_repel(data = dplyr::filter(df_beta, chi_msi < 1 / 0.019), aes(label = gene))
+
+ggplot(df_beta, aes(x = beta_meta, y = 1 / chi_meta)) + geom_point() +
+  geom_label_repel(data = dplyr::filter(df_beta, chi_meta < 1 / 0.019), aes(label = gene))
+
+ggplot(df_beta, aes(x = beta_msi, y = 1 / chi_msi)) +
+  stat_density_2d(geom = "raster", aes(fill = ..density..), contour = FALSE) +
+  scale_fill_viridis()
+
+ggplot(df_beta, aes(x = alpha_msi, y = beta_msi)) + geom_point()
+```
+
+
+Expression along pseudotime:
+
+```{r exprs-along-pst}
+tmap <- pcavi$m_t
+
+top_genes <- dplyr::arrange(df_beta, alpha_msi) %>% 
+  extract2("gene") %>% head(40)
+
+t(exprs(sc))[, top_genes[1:12]] %>% 
+  as_data_frame() %>% 
+  dplyr::mutate(phenotime = tmap, x = factor(x_msi)) %>% 
+  gather(gene, expression, -phenotime, -x) %>% 
+  ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
+  facet_wrap(~ gene, scales = "free_y") + 
+  scale_color_brewer(palette = "Set1", name = "MSI") +
+  stat_smooth(se = FALSE, method = "lm", size = 2)#, formula = y ~ ns(x,3))
+
+# t(exprs(sc))[, dplyr::filter(df_beta, chi_meta < 1 / 0.019) %>% extract2("gene")] %>% 
+#   as_data_frame() %>% 
+#   dplyr::mutate(phenotime = tmap, x = factor(x_metastasis)) %>% 
+#   gather(gene, expression, -phenotime, -x) %>% 
+#   ggplot(aes(x = phenotime, y = expression, color = x)) + geom_point(alpha = 0.4) +
+#   facet_wrap(~ gene, scales = "free_y") + 
+#   scale_color_brewer(palette = "Set1", name = "MSI") +
+#   stat_smooth(se = FALSE, method = "lm", size = 2)
+```
+
+
+
+
