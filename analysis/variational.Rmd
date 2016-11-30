@@ -27,9 +27,9 @@ scale_vec <- function(x) (x - mean(x)) / sd(x)
 ```{r load-all-data}
 load("../variational_analysis/va_results.Rdata")
 
-load("../data/sc_coad_tumour_only.Rdata")
+load("../data/sc_coad_gene.Rdata")
 
-sc <- sc_tumour[retained_fnames, ]
+sc <- sc_tumour_gene[retained_fnames, ]
 
 x_metastasis <- 1 * (sc$m_stage != "m0")
 x_metastasis[is.na(x_metastasis)] <- mean(x_metastasis, na.rm = TRUE)
@@ -45,8 +45,9 @@ Compare pseudotime to PC1:
 ```{r pseudotime-vs-pc1}
 pc1 <- prcomp(t(exprs(sc)), scale = TRUE)$x[,1]
 
-qplot(pc1, pcavi$m_t, color = factor(x_msi)) +
-  scale_color_brewer(palette = "Set1")
+qplot(scale_vec(pc1), scale_vec(pcavi$m_t), color = factor(x_msi)) +
+  scale_color_brewer(palette = "Set1") +
+  stat_function(fun = function(x) x, color = 'black')
 ```
 
 Look at beta plot:
@@ -64,9 +65,10 @@ df_beta <- data_frame(
   gene = featureNames(sc)
 )
 
+chi_thresh <- 0.022
 
 ggplot(df_beta, aes(x = beta_msi, y = 1 / chi_msi)) + geom_point() +
-  geom_label_repel(data = dplyr::filter(df_beta, chi_msi < 1 / 0.019), aes(label = gene))
+  geom_label_repel(data = dplyr::filter(df_beta, chi_msi < 1 / chi_thresh), aes(label = gene))
 
 ggplot(df_beta, aes(x = beta_meta, y = 1 / chi_meta)) + geom_point() +
   geom_label_repel(data = dplyr::filter(df_beta, chi_meta < 1 / 0.019), aes(label = gene))
@@ -84,10 +86,10 @@ Expression along pseudotime:
 ```{r exprs-along-pst}
 tmap <- pcavi$m_t
 
-top_genes <- dplyr::arrange(df_beta, alpha_msi) %>% 
+top_genes <- dplyr::arrange(df_beta, chi_msi) %>% 
   extract2("gene") %>% head(40)
 
-t(exprs(sc))[, top_genes[1:12]] %>% 
+t(exprs(sc))[, top_genes[25:40]] %>% 
   as_data_frame() %>% 
   dplyr::mutate(phenotime = tmap, x = factor(x_msi)) %>% 
   gather(gene, expression, -phenotime, -x) %>% 

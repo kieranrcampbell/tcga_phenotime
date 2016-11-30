@@ -12,7 +12,9 @@ scale_vec <- function(x) (x - mean(x)) / sd(x)
 
 var_exprs <- matrixStats::rowVars(exprs(sc_tumour_gene))
 
-to_use <- var_exprs > 1
+to_use <- var_exprs > 0.75
+
+print(paste("Retaining", sum(to_use), "genes"))
 
 sc <- sc_tumour_gene[to_use, ]
 
