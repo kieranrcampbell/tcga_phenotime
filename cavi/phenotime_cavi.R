@@ -105,12 +105,21 @@ phenotime_cavi <- function(y, x, maxiter = 1e4,
 
   rlist <- list(m_t = m_t, m_c = m_c, m_mu = m_mu, m_alpha = m_alpha,
                 s_alpha = s_alpha, a_tau = a_tau, b_tau = b_tau,
-                m_beta = m_beta, chi_exp = a_chi / b_chi,
+                m_beta = m_beta, s_beta = s_beta, chi_exp = a_chi / b_chi,
                 elbos = elbos)
   return(rlist)
 }
   
 
 
+get_sig <- function(pcavi) {
+  m_beta <- pcavi$m_beta
+  pos_sd <- sqrt(pcavi$s_beta)
+  
+  sig <- sapply(seq_len(nrow(m_beta)), function(i) {
+    m_beta[i,] - 2 * pos_sd[i,] > 0 | m_beta[i,] + 2 * pos_sd[i,] < 0
+  })
+  return(t(sig))
+}
 
 

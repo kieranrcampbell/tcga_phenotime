@@ -32,7 +32,7 @@ x_msi <- scale_vec( 1 * (sc$msi_status == "msi-h") )
 
 x <- cbind(x_msi)#, x_metastasis)
 
-y <- scale(t(exprs(sc)))
+y <- t(exprs(sc)) # scale(t(exprs(sc)))
 
 
 # Call phenotime ----------------------------------------------------------
