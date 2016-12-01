@@ -58,15 +58,15 @@ df_beta <- data_frame(
   c = pcavi$m_c,
   beta_msi = pcavi$m_beta[1,],
   chi_msi = pcavi$chi_exp[1,],
-  beta_meta = pcavi$m_beta[2,],
-  chi_meta = pcavi$chi_exp[2,],
+#  beta_meta = pcavi$m_beta[2,],
+#  chi_meta = pcavi$chi_exp[2,],
   alpha_msi = pcavi$m_alpha[1,],
-  alpha_meta = pcavi$m_alpha[2,],
+#  alpha_meta = pcavi$m_alpha[2,],
   gene = featureNames(sc),
   is_mmr = fData(sc)$is_mmr
 )
 
-chi_thresh <- 0.022
+chi_thresh <- 0.03
 
 ggplot(df_beta, aes(x = beta_msi, y = 1 / chi_msi, color = is_mmr)) + geom_point() +
   geom_label_repel(data = dplyr::filter(df_beta, chi_msi < 1 / chi_thresh), aes(label = gene))
@@ -97,7 +97,7 @@ tmap <- pcavi$m_t
 top_genes <- dplyr::arrange(df_beta, chi_msi) %>% 
   extract2("gene") %>% head(40)
 
-t(exprs(sc))[, top_genes[21:40]] %>% 
+t(exprs(sc))[, top_genes[1:10]] %>% 
   as_data_frame() %>% 
   dplyr::mutate(phenotime = tmap, x = factor(x_msi)) %>% 
   gather(gene, expression, -phenotime, -x) %>% 

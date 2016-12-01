@@ -12,10 +12,10 @@ scale_vec <- function(x) (x - mean(x)) / sd(x)
 
 var_exprs <- matrixStats::rowVars(exprs(sc_tumour_gene))
 
-to_use <- var_exprs > 0.15 | fData(sc_tumour_gene)$is_mmr
+to_use <- var_exprs > 0.5 | fData(sc_tumour_gene)$is_mmr
 
 print(paste("Retaining", sum(to_use), "genes"))
-print(paste(sum(fData(sc_tumour_gene)), "mmr genes"))
+print(paste(sum(fData(sc_tumour_gene)$is_mmr), "mmr genes"))
 
 
 
@@ -37,7 +37,7 @@ y <- scale(t(exprs(sc)))
 
 # Call phenotime ----------------------------------------------------------
 
-pcavi <- phenotime_cavi(y, x, elbo_tol = 0.005, thin = 2)
+pcavi <- phenotime_cavi(y, x, elbo_tol = 0.005, thin = 1)
 
 # Save results
 retained_fnames <- featureNames(sc)
